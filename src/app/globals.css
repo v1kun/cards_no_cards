@@ -269,13 +269,14 @@ textarea:focus-visible,
   background: #4a3a12;
   color: #f0cf8a;
   text-align: center;
-  padding: 0.6rem 1rem;
+  padding: calc(0.6rem + env(safe-area-inset-top)) 1rem 0.6rem;
   font-size: 0.9rem;
   border-bottom: 1px solid #6a5420;
 }
 
 /* --- Mobile viewport + iPhone safe areas --- */
 main {
+  padding-top: max(2rem, calc(env(safe-area-inset-top) + 0.75rem));
   padding-left: max(1.25rem, env(safe-area-inset-left));
   padding-right: max(1.25rem, env(safe-area-inset-right));
   padding-bottom: max(2rem, env(safe-area-inset-bottom));
@@ -283,7 +284,7 @@ main {
 
 @media (max-width: 540px) {
   main {
-    padding-top: 1.25rem;
+    padding-top: max(1.25rem, calc(env(safe-area-inset-top) + 0.75rem));
   }
 
   h1 {
