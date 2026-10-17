@@ -147,6 +147,30 @@ curl -s -X POST localhost:3000/api/v1/auth/signout
 curl -s -X DELETE localhost:3000/api/v1/me
 ```
 
+## Vocabulary and topics
+
+Manage words at [`/vocabulary`](http://localhost:3000/vocabulary): add words,
+filter by part of speech, topic, status, due state, and text search, and open a
+word to edit it, manage its topics, or archive/restore/delete it. The UI has
+explicit empty, loading, error, and retry states and works without any AI.
+
+The UI is backed by versioned JSON endpoints (all under `/api/v1`, all using the
+`{ data, error, requestId }` envelope and scoped to the signed-in user):
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /vocabulary` | Paginated list; filters: `search`, `partOfSpeech`, `status`, `topicId`, `dueOnly`, `limit`, `offset` |
+| `POST /vocabulary` | Create a word with forms, topics, and an optional source |
+| `GET /vocabulary/:id` | Word detail: forms, topics, sources, review summary |
+| `PATCH /vocabulary/:id` | Update editable fields and/or replace topics |
+| `DELETE /vocabulary/:id` | Archive by default; `?hard=true` deletes permanently |
+| `POST /vocabulary/:id/restore` | Restore an archived word |
+| `GET /vocabulary/:id` after delete | Returns `404` |
+| `GET /topics` · `POST /topics` | List topics · create one (normalized, deduplicated) |
+
+Topic names are normalized (case/whitespace) so duplicates collapse, and
+inflected forms stay attached to their lemma instead of becoming separate words.
+
 ## Configuration
 
 All configuration is validated at startup by `src/lib/env`. Missing or invalid

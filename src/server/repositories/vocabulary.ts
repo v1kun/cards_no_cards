@@ -1,10 +1,11 @@
-import { and, desc, eq, like } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, lte, or } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/server/db/client";
 import {
   partsOfSpeech,
   genders,
+  reviewStates,
   topics as topicsTable,
   vocabularyForms,
   vocabularyItems,
@@ -18,6 +19,17 @@ import { normalizeTopicName, TopicsRepository, type Topic } from "./topics";
 
 export type VocabularyItem = typeof vocabularyItems.$inferSelect;
 export type VocabularyForm = typeof vocabularyForms.$inferSelect;
+export type WordSource = typeof wordSources.$inferSelect;
+
+export type ReviewSummary = {
+  dueAt: Date | null;
+  introducedAt: Date | null;
+  reviewStage: number;
+  successfulRecalls: number;
+  consecutiveFailures: number;
+  lastResult: string | null;
+  lastReviewedAt: Date | null;
+} | null;
 
 const formInputSchema = z.object({
   form: z.string().min(1),
@@ -65,11 +77,34 @@ export type VocabularyFilters = {
   status?: (typeof vocabularyStatuses)[number];
   topicId?: string;
   search?: string;
+  dueOnly?: boolean;
+};
+
+export type Pagination = {
+  limit: number;
+  offset: number;
 };
 
 export type VocabularyWithRelations = VocabularyItem & {
   forms: VocabularyForm[];
   topics: Topic[];
+};
+
+export type VocabularyListItem = VocabularyItem & {
+  topics: Topic[];
+  reviewSummary: ReviewSummary;
+};
+
+export type VocabularyDetail = VocabularyWithRelations & {
+  sources: WordSource[];
+  reviewSummary: ReviewSummary;
+};
+
+export type VocabularyPage = {
+  items: VocabularyListItem[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export class VocabularyRepository {
@@ -155,6 +190,22 @@ export class VocabularyRepository {
   }
 
   async list(userId: string, filters: VocabularyFilters = {}): Promise<VocabularyItem[]> {
+    const rows = await this.buildFilteredQuery(userId, filters).orderBy(
+      desc(vocabularyItems.createdAt),
+      desc(vocabularyItems.id),
+    );
+    return rows.map((row) => row.item);
+  }
+
+  /**
+   * Builds a scoped, filtered query selecting whole vocabulary items.
+   *
+   * The selection is fixed to `{ item }` regardless of joins, so `topicId`
+   * and `dueOnly` can add joins without changing the result shape. A single
+   * topic join and the unique review-state join both yield at most one row
+   * per item, so counts and pages are not inflated.
+   */
+  private buildFilteredQuery(userId: string, filters: VocabularyFilters) {
     const conditions = [eq(vocabularyItems.userId, userId)];
     if (filters.status) {
       conditions.push(eq(vocabularyItems.status, filters.status));
@@ -166,22 +217,104 @@ export class VocabularyRepository {
       conditions.push(like(vocabularyItems.lemma, `%${filters.search}%`));
     }
 
+    let query = this.db.select({ item: vocabularyItems }).from(vocabularyItems).$dynamic();
+
     if (filters.topicId) {
-      const topicId = filters.topicId;
-      const rows = await this.db
-        .select()
-        .from(vocabularyItems)
-        .innerJoin(vocabularyTopics, eq(vocabularyTopics.vocabularyItemId, vocabularyItems.id))
-        .where(and(...conditions, eq(vocabularyTopics.topicId, topicId)))
-        .orderBy(desc(vocabularyItems.createdAt));
-      return rows.map((row) => row.vocabulary_items);
+      query = query.innerJoin(
+        vocabularyTopics,
+        and(
+          eq(vocabularyTopics.vocabularyItemId, vocabularyItems.id),
+          eq(vocabularyTopics.topicId, filters.topicId),
+        ),
+      );
     }
 
-    return this.db
+    if (filters.dueOnly) {
+      query = query.leftJoin(reviewStates, eq(reviewStates.vocabularyItemId, vocabularyItems.id));
+      // No review state (left-join null) or a due state both count as due.
+      conditions.push(or(isNull(reviewStates.dueAt), lte(reviewStates.dueAt, new Date()))!);
+    }
+
+    return query.where(and(...conditions));
+  }
+
+  /** Paginated listing with filters, enriched with topics and review summary. */
+  async listPage(
+    userId: string,
+    filters: VocabularyFilters,
+    pagination: Pagination,
+  ): Promise<VocabularyPage> {
+    const totalRows = await this.buildFilteredQuery(userId, filters);
+    const total = totalRows.length;
+
+    const rows = await this.buildFilteredQuery(userId, filters)
+      .orderBy(desc(vocabularyItems.createdAt), desc(vocabularyItems.id))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+    const items = rows.map((row) => row.item);
+
+    const [topicsByItem, summaryByItem] = await Promise.all([
+      this.topicsForItems(items.map((item) => item.id)),
+      this.reviewSummariesForItems(
+        userId,
+        items.map((item) => item.id),
+      ),
+    ]);
+
+    return {
+      items: items.map((item) => ({
+        ...item,
+        topics: topicsByItem.get(item.id) ?? [],
+        reviewSummary: summaryByItem.get(item.id) ?? null,
+      })),
+      total,
+      limit: pagination.limit,
+      offset: pagination.offset,
+    };
+  }
+
+  private async topicsForItems(ids: string[]): Promise<Map<string, Topic[]>> {
+    const byItem = new Map<string, Topic[]>();
+    if (ids.length === 0) {
+      return byItem;
+    }
+    const rows = await this.db
+      .select({ vocabularyItemId: vocabularyTopics.vocabularyItemId, topic: topicsTable })
+      .from(vocabularyTopics)
+      .innerJoin(topicsTable, eq(topicsTable.id, vocabularyTopics.topicId))
+      .where(inArray(vocabularyTopics.vocabularyItemId, ids));
+    for (const row of rows) {
+      const list = byItem.get(row.vocabularyItemId) ?? [];
+      list.push(row.topic);
+      byItem.set(row.vocabularyItemId, list);
+    }
+    return byItem;
+  }
+
+  private async reviewSummariesForItems(
+    userId: string,
+    ids: string[],
+  ): Promise<Map<string, ReviewSummary>> {
+    const byItem = new Map<string, ReviewSummary>();
+    if (ids.length === 0) {
+      return byItem;
+    }
+    const rows = await this.db
       .select()
-      .from(vocabularyItems)
-      .where(and(...conditions))
-      .orderBy(desc(vocabularyItems.createdAt));
+      .from(reviewStates)
+      .where(and(eq(reviewStates.userId, userId), inArray(reviewStates.vocabularyItemId, ids)));
+    for (const row of rows) {
+      byItem.set(row.vocabularyItemId, {
+        dueAt: row.dueAt,
+        introducedAt: row.introducedAt,
+        reviewStage: row.reviewStage,
+        successfulRecalls: row.successfulRecalls,
+        consecutiveFailures: row.consecutiveFailures,
+        lastResult: row.lastResult,
+        lastReviewedAt: row.lastReviewedAt,
+      });
+    }
+    return byItem;
   }
 
   async getById(userId: string, id: string): Promise<VocabularyWithRelations | null> {
@@ -209,11 +342,67 @@ export class VocabularyRepository {
     return { ...item, forms, topics: topicRows.map((row) => row.topics) };
   }
 
+  /** Full detail view: item, forms, topics, sources, and review summary. */
+  async getDetail(userId: string, id: string): Promise<VocabularyDetail | null> {
+    const base = await this.getById(userId, id);
+    if (!base) {
+      return null;
+    }
+
+    const sources = await this.db
+      .select()
+      .from(wordSources)
+      .where(eq(wordSources.vocabularyItemId, id));
+
+    const summaries = await this.reviewSummariesForItems(userId, [id]);
+
+    return { ...base, sources, reviewSummary: summaries.get(id) ?? null };
+  }
+
+  /**
+   * Replaces the item's topic links with the given names, normalizing and
+   * deduplicating them. Keeps inflected forms attached to the lemma rather
+   * than creating duplicate words. Verifies ownership of the item first.
+   */
+  async setTopics(userId: string, id: string, names: string[]): Promise<Topic[]> {
+    return this.db.transaction(async (tx) => {
+      const owned = await tx
+        .select({ id: vocabularyItems.id })
+        .from(vocabularyItems)
+        .where(and(eq(vocabularyItems.userId, userId), eq(vocabularyItems.id, id)))
+        .limit(1);
+      if (!owned[0]) {
+        throw new NotFoundError("VocabularyItem", id);
+      }
+
+      await tx
+        .delete(vocabularyTopics)
+        .where(and(eq(vocabularyTopics.userId, userId), eq(vocabularyTopics.vocabularyItemId, id)));
+
+      const linked: Topic[] = [];
+      const seen = new Set<string>();
+      for (const name of names) {
+        const normalized = normalizeTopicName(name);
+        if (!normalized || seen.has(normalized)) {
+          continue;
+        }
+        seen.add(normalized);
+        const topic = await this.topicsRepo.findOrCreate(userId, name, tx);
+        await tx
+          .insert(vocabularyTopics)
+          .values({ userId, vocabularyItemId: id, topicId: topic.id })
+          .onConflictDoNothing();
+        linked.push(topic);
+      }
+      return linked;
+    });
+  }
+
   async update(userId: string, id: string, input: UpdateVocabularyInput): Promise<VocabularyItem> {
     const data = updateVocabularySchema.parse(input);
     const updated = await this.db
       .update(vocabularyItems)
-      .set(data)
+      .set({ ...data, updatedAt: new Date() })
       .where(and(eq(vocabularyItems.userId, userId), eq(vocabularyItems.id, id)))
       .returning();
     if (!updated[0]) {

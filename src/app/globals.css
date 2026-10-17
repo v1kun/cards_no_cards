@@ -35,3 +35,184 @@ main {
 a {
   color: var(--accent);
 }
+
+/* --- Layout widening for data-entry pages --- */
+main {
+  max-width: 760px;
+}
+
+h1 {
+  font-size: 1.6rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-top: 0;
+}
+
+/* --- Cards and forms --- */
+.card {
+  background: #15151c;
+  border: 1px solid #262630;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  margin: 1rem 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.field > span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+input,
+select {
+  background: #0f0f15;
+  color: var(--foreground);
+  border: 1px solid #2d2d38;
+  border-radius: 7px;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  width: 100%;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox input {
+  width: auto;
+}
+
+button {
+  background: var(--accent);
+  color: #06111f;
+  border: none;
+  border-radius: 7px;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.secondary {
+  background: #2a2a34;
+  color: var(--foreground);
+}
+
+button.danger {
+  background: #e0576b;
+  color: #1a0206;
+}
+
+/* --- Lists --- */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.list-item {
+  border-bottom: 1px solid #22222b;
+  padding-bottom: 0.6rem;
+}
+
+.list-link {
+  text-decoration: none;
+  color: var(--foreground);
+  font-size: 1.05rem;
+}
+
+.list-link strong {
+  color: var(--accent);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.tag {
+  font-size: 0.72rem;
+  background: #223;
+  color: #cdd;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+
+.tag.ghost {
+  background: #1d1d26;
+  color: var(--muted);
+}
+
+.tag.warn {
+  background: #4a3a12;
+  color: #f0cf8a;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: #f0909f;
+  margin: 0;
+}
+
+.error-box {
+  background: #2a1218;
+  border: 1px solid #5a2630;
+  border-radius: 10px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
