@@ -16,6 +16,14 @@ const envSchema = z
     AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
     OPENAI_API_KEY: z.string().optional(),
     AI_MODEL: z.string().optional(),
+    // Authentication provider. `dev` resolves a local mock session for
+    // development and tests; `cognito` (Amazon Cognito + Apple) is wired up
+    // in a later phase.
+    AUTH_PROVIDER: z.enum(["dev", "cognito"]).default("dev"),
+    // Identity of the local development user used by the `dev` auth provider.
+    DEV_USER_ID: z.string().min(1).default("dev-user"),
+    DEV_USER_EMAIL: z.string().email().default("dev@example.com"),
+    DEV_USER_NAME: z.string().min(1).default("Local Developer"),
   })
   .superRefine((value, ctx) => {
     if (value.AI_PROVIDER === "openai" && !value.OPENAI_API_KEY) {

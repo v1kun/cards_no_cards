@@ -112,6 +112,41 @@ separate database server.
 npm run db:migrate
 ```
 
+## Authentication
+
+Authentication is behind a vendor-neutral `AuthProvider` abstraction
+(`src/server/auth`), selected by `AUTH_PROVIDER`:
+
+- **`dev` (default):** resolves a stable local session with no real login, so
+  the app runs without AWS or Apple. Set the `x-dev-user-id` request header to
+  act as a different local user — useful for checking that one user cannot see
+  another's data.
+- **`cognito`:** Amazon Cognito User Pools with Sign in with Apple as a
+  federated identity provider. Wired up in the deployment phase.
+
+Protected route handlers are wrapped with `withAuth` (`src/lib/api/respond.ts`),
+which rejects unauthenticated requests with `401` and otherwise provides the
+resolved session. All responses use the `{ data, error, requestId }` envelope.
+
+Example protected endpoints:
+
+```bash
+# Current profile (created on first access)
+curl -s localhost:3000/api/v1/me
+
+# Act as a different local user
+curl -s -H 'x-dev-user-id: user-b' localhost:3000/api/v1/me
+
+# Update preferences
+curl -s -X PATCH -H 'content-type: application/json' \
+  -d '{"preferredLocale":"es","timezone":"Europe/Madrid"}' \
+  localhost:3000/api/v1/me
+
+# Sign out / delete account (removes all owned data)
+curl -s -X POST localhost:3000/api/v1/auth/signout
+curl -s -X DELETE localhost:3000/api/v1/me
+```
+
 ## Configuration
 
 All configuration is validated at startup by `src/lib/env`. Missing or invalid
@@ -122,6 +157,9 @@ variables fail fast with a clear error. Copy `.env.example` and fill values in
 - `OPENAI_API_KEY` — required only when `AI_PROVIDER=openai`
 - `DATABASE_URL` — libSQL URL for the SQLite database, e.g.
   `file:./local-data/cards.sqlite`
+- `AUTH_PROVIDER` — `dev` (default) or `cognito`
+- `DEV_USER_ID` / `DEV_USER_EMAIL` / `DEV_USER_NAME` — identity used by the
+  `dev` auth provider
 
 ## Project structure
 
@@ -129,7 +167,9 @@ variables fail fast with a clear error. Copy `.env.example` and fill values in
 src/
   app/              Next.js App Router (UI + route handlers)
   lib/env/          Validated environment configuration
+  lib/api/          API envelope + auth wrapper for route handlers
   server/ai/        Vendor-neutral AIProvider interface + adapters (mock first)
+  server/auth/      Vendor-neutral AuthProvider interface + adapters (dev first)
   server/db/        Drizzle schema, client, and migration runner
   server/repositories/  Typed, ownership-scoped data access
   domain/           Pure domain logic (scheduling, exercises) — added per phase

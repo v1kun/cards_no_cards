@@ -55,7 +55,11 @@ Use a single repository and a modular monolith.
     only for safe static assets and app shell. Do not cache private API
     responses or sensitive user data by default.
 -   **Database:** SQLite.
--   **Authentication:** Amazon Cognito User Pools with Apple OAuth provider.
+-   **Authentication:** Amazon Cognito User Pools with Apple as a federated
+    identity provider (see the authentication decision in §7). Application
+    code depends only on an internal `AuthProvider` abstraction; a local
+    `dev` provider is used for development and tests so the app runs without
+    AWS or Apple.
 -   **Server API:** Next.js Route Handlers for application-specific
     operations.
 -   **Validation:** Zod (or an equivalent schema validator) at every
@@ -572,6 +576,32 @@ Do not expose stack traces, SQL messages, provider responses, or secrets
 to clients.
 
 ### Authentication
+
+#### Architecture decision
+
+The architecture checkpoint asked whether Amazon Cognito remains an external
+managed dependency or whether Apple federation is implemented directly.
+
+**Decision:** Amazon Cognito User Pools is the single managed authentication
+dependency, with **Sign in with Apple configured as a federated identity
+provider inside Cognito** — not as a separate, custom Apple OAuth flow. Only
+one system is implemented, satisfying "do not implement both".
+
+To keep local development and tests free of AWS and Apple, the application
+depends only on an internal, vendor-neutral `AuthProvider` abstraction
+(`src/server/auth`):
+
+-   A `dev` provider resolves a stable local session with no real login.
+    A request may set the `x-dev-user-id` header to act as a different local
+    user, which is used to verify per-user data isolation.
+-   A `cognito` provider (added in the deployment phase) verifies the Cognito
+    session and returns the Apple-derived `sub` as the user identity.
+
+The user's external `sub` is stored as `user_id`/profile id. Apple identity
+tokens and Cognito credentials are never persisted. Sign-out is exposed as
+`POST /api/v1/auth/signout`; with Cognito it revokes the session, and with the
+`dev` provider it is a no-op. Account deletion (`DELETE /api/v1/me`) removes
+the profile and all owned rows in one transaction, per the retention policy.
 
 -   Use Amazon Cognito User Pools with the Apple provider.
 -   Protect application routes and refresh sessions using the
