@@ -228,6 +228,26 @@ idempotent via a client-supplied `attemptId`.
 | `GET /review/session/:id` | Session status and a running summary |
 | `PATCH /review/session/:id` | Complete the session and return its summary |
 
+## Progressive Web App (install on iPhone)
+
+Cards No Cards is installable to the iPhone home screen and launches
+full-screen.
+
+- **Manifest** (`src/app/manifest.ts`, served at `/manifest.webmanifest`):
+  standalone display, portrait orientation, dark theme, and app icons.
+- **Icons** (`public/icons/`): 192/512 standard plus a maskable 512 (safe-zone
+  padded) and a 180px apple-touch icon.
+- **Service worker** (`public/sw.js`): registered in production only
+  (`src/components/ServiceWorkerRegister.tsx`). It caches **only** same-origin
+  static assets (`/_next/static/`, `/icons/`, the manifest). It never caches
+  page navigations or any `/api/` response, so authenticated data and private
+  vocabulary are never stored offline.
+- **Offline banner** (`src/components/OfflineBanner.tsx`): a status banner
+  appears when the browser goes offline; the API client surfaces network
+  failures as clear errors so a failed save is never silent.
+- **Install steps**: open the site in Safari, tap **Share → Add to Home
+  Screen**. The in-app guide lives at `/install`.
+
 ## AI provider
 
 AI features (parsing free text into vocabulary, generating example sentences,
@@ -285,7 +305,11 @@ src/
   server/repositories/  Typed, ownership-scoped data access
   server/services/  Orchestration across repositories, domain, and AI (practice)
   domain/review/    Pure review scheduling + exercise logic (no DB/UI/AI)
+  components/       Client components (offline banner, SW registration)
 drizzle/            Generated SQL migrations
+public/
+  sw.js             Service worker (static assets only; never caches API)
+  icons/            PWA icons (standard, maskable, apple-touch)
 tests/
   unit/             Unit tests
   integration/      Database/repository integration tests
