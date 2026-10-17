@@ -71,8 +71,8 @@ docker compose down -v
 rm -rf ./local-data
 ```
 
-Schema creation via migrations is introduced in Phase 2; until then a
-reset simply clears the (currently unused) local database location.
+After resetting, re-create the schema with `npm run db:migrate` (and, for
+containers, on next start).
 
 ## Available commands
 
@@ -87,6 +87,30 @@ reset simply clears the (currently unused) local database location.
 | `npm run typecheck`    | TypeScript strict type check              |
 | `npm test`             | Run the Vitest suite once                 |
 | `npm run test:watch`   | Run Vitest in watch mode                  |
+| `npm run db:generate`  | Generate SQL migrations from the schema   |
+| `npm run db:migrate`   | Apply migrations to `DATABASE_URL`        |
+
+## Database
+
+The data layer uses **SQLite** (via libSQL) with **Drizzle ORM**. There is no
+separate database server.
+
+- **Schema:** `src/server/db/schema.ts` — profiles, lessons, vocabulary items,
+  forms, topics, topic links, word sources, import batches/items, review
+  states, attempts, and practice sessions, with indexes and constraints.
+- **Migrations:** committed SQL under `drizzle/`. Generate after a schema
+  change with `npm run db:generate`; apply with `npm run db:migrate`. Migrations
+  are ordered and idempotent — the same files run in local development and
+  production.
+- **Repositories:** `src/server/repositories/` — typed, ownership-scoped data
+  access (every query is filtered by `user_id`). Topic names are normalized to
+  avoid duplicates; vocabulary creation (item + forms + topics + source) is
+  transactional; archival is preferred over deletion, and hard deletes cascade.
+
+```bash
+# After cloning or changing the schema, create/upgrade the local database:
+npm run db:migrate
+```
 
 ## Configuration
 
@@ -96,18 +120,23 @@ variables fail fast with a clear error. Copy `.env.example` and fill values in
 
 - `AI_PROVIDER` — `mock` (default) or `openai`
 - `OPENAI_API_KEY` — required only when `AI_PROVIDER=openai`
-- `DATABASE_URL` — local SQLite path (used from a later phase)
+- `DATABASE_URL` — libSQL URL for the SQLite database, e.g.
+  `file:./local-data/cards.sqlite`
 
 ## Project structure
 
 ```text
 src/
-  app/          Next.js App Router (UI + route handlers)
-  lib/env/      Validated environment configuration
-  server/ai/    Vendor-neutral AIProvider interface + adapters (mock first)
-  domain/       Pure domain logic (scheduling, exercises) — added per phase
+  app/              Next.js App Router (UI + route handlers)
+  lib/env/          Validated environment configuration
+  server/ai/        Vendor-neutral AIProvider interface + adapters (mock first)
+  server/db/        Drizzle schema, client, and migration runner
+  server/repositories/  Typed, ownership-scoped data access
+  domain/           Pure domain logic (scheduling, exercises) — added per phase
+drizzle/            Generated SQL migrations
 tests/
-  unit/         Unit tests
+  unit/             Unit tests
+  integration/      Database/repository integration tests
 ```
 
 ## Security notes
