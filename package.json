@@ -25,6 +25,7 @@
     "@libsql/client": "^0.15.15",
     "drizzle-orm": "^0.44.6",
     "next": "^15.5.28",
+    "openai": "^4.104.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
     "server-only": "0.0.1",

@@ -171,6 +171,33 @@ The UI is backed by versioned JSON endpoints (all under `/api/v1`, all using the
 Topic names are normalized (case/whitespace) so duplicates collapse, and
 inflected forms stay attached to their lemma instead of becoming separate words.
 
+## AI provider
+
+AI features (parsing free text into vocabulary, generating example sentences,
+and grading practice answers) sit behind a single vendor-neutral interface,
+`AIProvider` (`src/server/ai/types.ts`). Domain code depends only on that
+interface and its Zod output schemas — never on a vendor SDK.
+
+- **`mock`** (default): deterministic, offline, used for local dev and every
+  test. No API key, no network.
+- **`openai`**: real adapter (`src/server/ai/adapters/openai-provider.ts`). The
+  OpenAI SDK import, prompt construction, and JSON handling are confined to that
+  file. It requests JSON-mode responses and validates them against the shared
+  schemas. Switching providers is a configuration/adapter change only.
+
+Every real request goes through shared resilience helpers
+(`src/server/ai/resilience.ts`): a per-request timeout, bounded retries with
+exponential backoff + jitter (retrying only transient failures such as `429`/5xx
+and timeouts), and an optional minimum-interval rate limiter. Malformed model
+output is rejected with a typed `AIResponseError`, and partially-valid parse
+items are kept but forced into the review queue rather than silently dropped, so
+a bad response never corrupts saved vocabulary. Errors are vendor-neutral
+(`src/server/ai/errors.ts`).
+
+Configuration (all server-side): `AI_PROVIDER`, `OPENAI_API_KEY` (required when
+`AI_PROVIDER=openai`), `AI_MODEL`, `AI_BASE_URL`, `AI_REQUEST_TIMEOUT_MS`,
+`AI_MAX_RETRIES`, and `AI_MIN_REQUEST_INTERVAL_MS`.
+
 ## Configuration
 
 All configuration is validated at startup by `src/lib/env`. Missing or invalid
@@ -179,6 +206,9 @@ variables fail fast with a clear error. Copy `.env.example` and fill values in
 
 - `AI_PROVIDER` — `mock` (default) or `openai`
 - `OPENAI_API_KEY` — required only when `AI_PROVIDER=openai`
+- `AI_MODEL` / `AI_BASE_URL` — optional model id and OpenAI-compatible base URL
+- `AI_REQUEST_TIMEOUT_MS` / `AI_MAX_RETRIES` / `AI_MIN_REQUEST_INTERVAL_MS` —
+  resilience tuning for real AI adapters (ignored by the mock provider)
 - `DATABASE_URL` — libSQL URL for the SQLite database, e.g.
   `file:./local-data/cards.sqlite`
 - `AUTH_PROVIDER` — `dev` (default) or `cognito`

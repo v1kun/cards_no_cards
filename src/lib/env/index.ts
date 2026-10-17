@@ -16,6 +16,12 @@ const envSchema = z
     AI_PROVIDER: z.enum(["mock", "openai"]).default("mock"),
     OPENAI_API_KEY: z.string().optional(),
     AI_MODEL: z.string().optional(),
+    // Optional custom base URL for OpenAI-compatible endpoints.
+    AI_BASE_URL: z.string().url().optional(),
+    // Resilience tuning for real AI adapters (ignored by the mock provider).
+    AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+    AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+    AI_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(0).default(0),
     // Authentication provider. `dev` resolves a local mock session for
     // development and tests; `cognito` (Amazon Cognito + Apple) is wired up
     // in a later phase.

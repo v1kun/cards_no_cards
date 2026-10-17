@@ -3,6 +3,7 @@ import "server-only";
 import { env } from "@/lib/env";
 import type { AIProvider } from "./types";
 import { MockAIProvider } from "./adapters/mock-provider";
+import { OpenAIProvider } from "./adapters/openai-provider";
 
 /**
  * Returns the configured AI provider adapter.
@@ -16,10 +17,15 @@ export function createAIProvider(): AIProvider {
     case "mock":
       return new MockAIProvider();
     case "openai":
-      // The OpenAI adapter is introduced in the AI-provider phase.
-      throw new Error(
-        "AI_PROVIDER=openai is not implemented yet. Set AI_PROVIDER=mock for local development.",
-      );
+      return new OpenAIProvider({
+        // `env` validation guarantees the key is present when provider=openai.
+        apiKey: env.OPENAI_API_KEY ?? "",
+        model: env.AI_MODEL ?? "gpt-4o-mini",
+        baseURL: env.AI_BASE_URL,
+        timeoutMs: env.AI_REQUEST_TIMEOUT_MS,
+        maxRetries: env.AI_MAX_RETRIES,
+        minIntervalMs: env.AI_MIN_REQUEST_INTERVAL_MS,
+      });
     default: {
       const exhaustive: never = env.AI_PROVIDER;
       throw new Error(`Unsupported AI_PROVIDER: ${String(exhaustive)}`);
