@@ -75,7 +75,7 @@ export default function PracticePage() {
   }, []);
 
   const grade = useCallback(
-    async (options: { skipped?: boolean }) => {
+    async (options: { skipped?: boolean; answerOverride?: string }) => {
       if (!session || !current) return;
       setSubmitting(true);
       setError(null);
@@ -84,7 +84,7 @@ export default function PracticePage() {
           sessionId: session.id,
           vocabularyItemId: current.vocabularyItemId,
           exerciseType: current.exerciseType,
-          submittedAnswer: options.skipped ? undefined : answer,
+          submittedAnswer: options.skipped ? undefined : (options.answerOverride ?? answer),
           usedHint,
           skipped: options.skipped ?? false,
           attemptId: attemptId ?? undefined,
@@ -240,7 +240,7 @@ export default function PracticePage() {
                 disabled={submitting}
                 onClick={() => {
                   setAnswer(option);
-                  void grade({ skipped: false });
+                  void grade({ skipped: false, answerOverride: option });
                 }}
               >
                 {option}
