@@ -35,6 +35,45 @@ http://localhost:3000/api/health.
 Local development runs with no AWS credentials and no paid AI calls:
 `AI_PROVIDER=mock` is the default.
 
+## Local development with Docker
+
+The database is file-based **SQLite** — there is no separate database
+server. The app container stores the database file on a persistent named
+volume (`cards-data`), so local data survives container restarts and
+rebuilds. Docker/Podman is optional; the `npm run dev` flow above does
+not require it.
+
+```bash
+# Production-like container (Next.js standalone server)
+docker compose up --build app
+
+# Hot-reload dev container (mounts the source tree)
+docker compose up dev
+```
+
+Both expose the app on http://localhost:3000 and a health check on
+http://localhost:3000/api/health. The `app` service declares a
+container healthcheck against that route.
+
+> The commands use `docker compose`; `podman compose` works the same
+> way. Images are intended to be built in CI, not on the deployment host.
+
+### Resetting local data
+
+Local SQLite data lives in the `cards-data` volume (containers) or in
+`./local-data` (host `npm run dev`). To reset to an empty database:
+
+```bash
+# Containers: remove the app and its data volume
+docker compose down -v
+
+# Host dev server: delete the local database files
+rm -rf ./local-data
+```
+
+Schema creation via migrations is introduced in Phase 2; until then a
+reset simply clears the (currently unused) local database location.
+
 ## Available commands
 
 | Command                | Description                               |

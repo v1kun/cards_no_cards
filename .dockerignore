@@ -1,0 +1,37 @@
+node_modules
+.next
+out
+build
+dist
+coverage
+
+# Env & secrets (image uses build-time/compose env, never committed files)
+.env
+.env.*
+!.env.example
+
+# Local database data
+local-data
+data
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# VCS / editor / CI
+.git
+.github
+.idea
+.vscode
+.DS_Store
+
+# Docs & meta (not needed in the image)
+*.md
+!README.md
+LICENSE
+
+# Terraform
+**/.terraform
+*.tfstate
+*.tfstate.*

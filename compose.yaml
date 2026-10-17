@@ -1,0 +1,66 @@
+# Local development environment for Cards No Cards.
+#
+# The database is file-based SQLite (no separate DB server). The app
+# container stores the database on a persistent named volume so data
+# survives container restarts and rebuilds.
+#
+#   Production-like container:  docker compose up --build app
+#   Hot-reload dev container:   docker compose up dev
+#
+# Local development does not require AWS credentials. AI_PROVIDER=mock
+# keeps the app free of paid API calls.
+
+services:
+  # Production-like image (Next.js standalone server).
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cards-no-cards:local
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      DATABASE_URL: file:/app/local-data/cards.sqlite
+      APP_BASE_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - cards-data:/app/local-data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # Hot-reload development server. Mounts the source tree and keeps the
+  # container's node_modules isolated from the host.
+  dev:
+    image: node:22-bookworm-slim
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      DATABASE_URL: file:/app/local-data/cards.sqlite
+      APP_BASE_URL: http://localhost:3000
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - dev-node-modules:/app/node_modules
+      - cards-data:/app/local-data
+    profiles:
+      - dev
+
+volumes:
+  cards-data:
+  dev-node-modules:
