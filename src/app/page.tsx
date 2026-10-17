@@ -11,6 +11,9 @@ export default function HomePage() {
       <p>
         <Link href="/import">Import from lesson notes →</Link>
       </p>
+      <p>
+        <Link href="/practice">Start a practice session →</Link>
+      </p>
     </main>
   );
 }

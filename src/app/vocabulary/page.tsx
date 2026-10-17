@@ -117,6 +117,8 @@ export default function VocabularyPage() {
         <Link href="/">← Home</Link>
         {" · "}
         <Link href="/import">Import from notes →</Link>
+        {" · "}
+        <Link href="/practice">Practice →</Link>
       </p>
       <h1>Vocabulary</h1>
 

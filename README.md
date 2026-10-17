@@ -194,6 +194,40 @@ but the raw text is preserved so it can be reprocessed.
 | `POST /imports/:id/reprocess` | Re-run AI parsing (e.g. after a failure) |
 | `POST /imports/:id/confirm` | Transactionally create/merge selected proposals (idempotent) |
 
+## Practice and review
+
+Run a short session at [`/practice`](http://localhost:3000/practice). Each
+session mixes words whose scheduled review is **due** with up to five **new**
+words, targeting roughly three minutes — due reviews are always prioritized over
+introducing too much new material, and there is no enforced timer. Exercises are
+served one at a time: multiple choice for new words, recall from the translation
+once a word is known, and cloze (fill-in-the-blank) for well-known words that
+have an example sentence.
+
+Scheduling is deterministic and lives in `src/domain/review/` (the AI model
+never chooses review dates). Intervals follow a fixed ladder (1, 3, 7, 14, 30
+days):
+
+- An independent correct answer advances a full step.
+- A hint-assisted answer counts as a success but grows the interval less
+  aggressively, and is recorded separately from independent recall.
+- A wrong answer increments the failure count and schedules a much earlier
+  review; a single correct answer never permanently "masters" a word.
+- A skip is recorded distinctly and counts as neither success nor failure.
+
+Objective exercises are graded deterministically (accent/case/punctuation
+lenient). Open-ended recall may consult the AI adapter for synonyms; an
+`uncertain` evaluation never auto-punishes the learner — it asks them to retry
+and records nothing. Attempt history is append-only and attempt submission is
+idempotent via a client-supplied `attemptId`.
+
+| Method & path | Purpose |
+| --- | --- |
+| `POST /review/session` | Start a session; returns ordered exercises with no answers revealed |
+| `POST /review/attempts` | Grade one answer, persist it, and update scheduling (idempotent) |
+| `GET /review/session/:id` | Session status and a running summary |
+| `PATCH /review/session/:id` | Complete the session and return its summary |
+
 ## AI provider
 
 AI features (parsing free text into vocabulary, generating example sentences,
@@ -249,7 +283,8 @@ src/
   server/auth/      Vendor-neutral AuthProvider interface + adapters (dev first)
   server/db/        Drizzle schema, client, and migration runner
   server/repositories/  Typed, ownership-scoped data access
-  domain/           Pure domain logic (scheduling, exercises) — added per phase
+  server/services/  Orchestration across repositories, domain, and AI (practice)
+  domain/review/    Pure review scheduling + exercise logic (no DB/UI/AI)
 drizzle/            Generated SQL migrations
 tests/
   unit/             Unit tests
