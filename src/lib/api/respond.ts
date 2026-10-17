@@ -4,7 +4,12 @@ import { ZodError } from "zod";
 import { UnauthorizedError } from "@/server/auth/errors";
 import type { AuthSession } from "@/server/auth/types";
 import { requireSession } from "@/server/auth/session";
-import { NotFoundError, OwnershipError, ValidationError } from "@/server/repositories/errors";
+import {
+  NotFoundError,
+  OwnershipError,
+  ValidationError,
+  ConflictError,
+} from "@/server/repositories/errors";
 
 /**
  * Consistent JSON API envelope and error handling for route handlers.
@@ -19,6 +24,7 @@ export type ApiErrorCode =
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
   | "FORBIDDEN"
+  | "CONFLICT"
   | "INTERNAL";
 
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
@@ -26,6 +32,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
   FORBIDDEN: 403,
+  CONFLICT: 409,
   INTERNAL: 500,
 };
 
@@ -77,6 +84,9 @@ export function handleRouteError(error: unknown): NextResponse {
   }
   if (error instanceof NotFoundError || error instanceof OwnershipError) {
     return fail("NOT_FOUND", "The requested resource was not found.");
+  }
+  if (error instanceof ConflictError) {
+    return fail("CONFLICT", error.message);
   }
 
   console.error("Unhandled route error:", error);

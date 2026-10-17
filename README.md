@@ -171,6 +171,29 @@ The UI is backed by versioned JSON endpoints (all under `/api/v1`, all using the
 Topic names are normalized (case/whitespace) so duplicates collapse, and
 inflected forms stay attached to their lemma instead of becoming separate words.
 
+## Import from free text
+
+Paste lesson notes or a word list at [`/import`](http://localhost:3000/import).
+The raw text is saved first, then parsed by the configured AI provider into
+editable proposals (lemma, translation, part of speech, topics, forms). You can
+edit any field, change each proposal's decision (create / merge / skip), and
+only then confirm — nothing is written to your vocabulary until you do.
+
+Proposals whose lemma already exists are pre-flagged as likely duplicates and
+default to **merge**, so importing the same notes twice enriches existing words
+instead of duplicating them. Confirmation runs in a single transaction and is
+idempotent: retrying it never creates duplicates, and if it fails your existing
+vocabulary is left untouched. If AI parsing fails, the batch is marked `failed`
+but the raw text is preserved so it can be reprocessed.
+
+| Method & path | Purpose |
+| --- | --- |
+| `POST /imports` | Create a batch from `rawText` and parse it (max 20k chars) |
+| `GET /imports/:id` | Batch status and current proposals |
+| `PATCH /imports/:id` | Edit proposals/decisions before confirming |
+| `POST /imports/:id/reprocess` | Re-run AI parsing (e.g. after a failure) |
+| `POST /imports/:id/confirm` | Transactionally create/merge selected proposals (idempotent) |
+
 ## AI provider
 
 AI features (parsing free text into vocabulary, generating example sentences,

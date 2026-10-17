@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull, like, lte, or } from "drizzle-orm";
 import { z } from "zod";
 
-import type { Database } from "@/server/db/client";
+import type { Database, DbExecutor } from "@/server/db/client";
 import {
   partsOfSpeech,
   genders,
@@ -121,72 +121,82 @@ export class VocabularyRepository {
    */
   async create(userId: string, input: CreateVocabularyInput): Promise<VocabularyWithRelations> {
     const data = createVocabularySchema.parse(input);
+    return this.db.transaction((tx) => this.createWithin(tx, userId, data));
+  }
 
-    return this.db.transaction(async (tx) => {
-      const [item] = await tx
-        .insert(vocabularyItems)
-        .values({
-          userId,
-          lemma: data.lemma,
-          translation: data.translation,
-          partOfSpeech: data.partOfSpeech,
-          definition: data.definition,
-          gender: data.gender,
-          exampleSentence: data.exampleSentence,
-          exampleTranslation: data.exampleTranslation,
-          languageCode: data.languageCode,
-          aiConfidence: data.aiConfidence,
-        })
-        .returning();
-      if (!item) {
-        throw new Error("Failed to insert vocabulary item");
-      }
+  /**
+   * Inserts a vocabulary item and its relations using the provided executor,
+   * so callers (such as import confirmation) can compose it into a larger
+   * transaction. Input is assumed already validated by the schema.
+   */
+  async createWithin(
+    executor: DbExecutor,
+    userId: string,
+    data: z.infer<typeof createVocabularySchema>,
+  ): Promise<VocabularyWithRelations> {
+    const [item] = await executor
+      .insert(vocabularyItems)
+      .values({
+        userId,
+        lemma: data.lemma,
+        translation: data.translation,
+        partOfSpeech: data.partOfSpeech,
+        definition: data.definition,
+        gender: data.gender,
+        exampleSentence: data.exampleSentence,
+        exampleTranslation: data.exampleTranslation,
+        languageCode: data.languageCode,
+        aiConfidence: data.aiConfidence,
+      })
+      .returning();
+    if (!item) {
+      throw new Error("Failed to insert vocabulary item");
+    }
 
-      if (data.forms.length > 0) {
-        await tx.insert(vocabularyForms).values(
-          data.forms.map((form) => ({
-            userId,
-            vocabularyItemId: item.id,
-            form: form.form,
-            formType: form.formType,
-            grammarNote: form.grammarNote,
-          })),
-        );
-      }
-
-      const linkedTopics: Topic[] = [];
-      const seen = new Set<string>();
-      for (const name of data.topics) {
-        const normalized = normalizeTopicName(name);
-        if (seen.has(normalized)) {
-          continue;
-        }
-        seen.add(normalized);
-        const topic = await this.topicsRepo.findOrCreate(userId, name, tx);
-        await tx
-          .insert(vocabularyTopics)
-          .values({ userId, vocabularyItemId: item.id, topicId: topic.id })
-          .onConflictDoNothing();
-        linkedTopics.push(topic);
-      }
-
-      if (data.source) {
-        await tx.insert(wordSources).values({
+    if (data.forms.length > 0) {
+      await executor.insert(vocabularyForms).values(
+        data.forms.map((form) => ({
           userId,
           vocabularyItemId: item.id,
-          lessonId: data.source.lessonId,
-          sourceType: data.source.sourceType,
-          sourceText: data.source.sourceText,
-        });
+          form: form.form,
+          formType: form.formType,
+          grammarNote: form.grammarNote,
+        })),
+      );
+    }
+
+    const linkedTopics: Topic[] = [];
+    const seen = new Set<string>();
+    for (const name of data.topics) {
+      const normalized = normalizeTopicName(name);
+      if (seen.has(normalized)) {
+        continue;
       }
+      seen.add(normalized);
+      const topic = await this.topicsRepo.findOrCreate(userId, name, executor);
+      await executor
+        .insert(vocabularyTopics)
+        .values({ userId, vocabularyItemId: item.id, topicId: topic.id })
+        .onConflictDoNothing();
+      linkedTopics.push(topic);
+    }
 
-      const forms = await tx
-        .select()
-        .from(vocabularyForms)
-        .where(eq(vocabularyForms.vocabularyItemId, item.id));
+    if (data.source) {
+      await executor.insert(wordSources).values({
+        userId,
+        vocabularyItemId: item.id,
+        lessonId: data.source.lessonId,
+        sourceType: data.source.sourceType,
+        sourceText: data.source.sourceText,
+      });
+    }
 
-      return { ...item, forms, topics: linkedTopics };
-    });
+    const forms = await executor
+      .select()
+      .from(vocabularyForms)
+      .where(eq(vocabularyForms.vocabularyItemId, item.id));
+
+    return { ...item, forms, topics: linkedTopics };
   }
 
   async list(userId: string, filters: VocabularyFilters = {}): Promise<VocabularyItem[]> {
@@ -195,6 +205,85 @@ export class VocabularyRepository {
       desc(vocabularyItems.id),
     );
     return rows.map((row) => row.item);
+  }
+
+  /**
+   * Adds forms, topic links, and an optional source to an existing word
+   * using the provided executor. Used by import "merge" decisions so that
+   * duplicates enrich the existing lemma instead of creating a new word.
+   * Verifies ownership and returns the ids of forms that were newly added.
+   */
+  async attachWithin(
+    executor: DbExecutor,
+    userId: string,
+    vocabularyItemId: string,
+    data: {
+      forms?: { form: string; formType?: string; grammarNote?: string }[];
+      topics?: string[];
+      source?: {
+        sourceType: (typeof wordSourceTypes)[number];
+        sourceText?: string;
+        lessonId?: string;
+      };
+    },
+  ): Promise<void> {
+    const owned = await executor
+      .select({ id: vocabularyItems.id })
+      .from(vocabularyItems)
+      .where(and(eq(vocabularyItems.id, vocabularyItemId), eq(vocabularyItems.userId, userId)))
+      .limit(1);
+    if (!owned[0]) {
+      throw new NotFoundError("Vocabulary item", vocabularyItemId);
+    }
+
+    const existingForms = await executor
+      .select({ form: vocabularyForms.form })
+      .from(vocabularyForms)
+      .where(eq(vocabularyForms.vocabularyItemId, vocabularyItemId));
+    const seenForms = new Set(existingForms.map((f) => f.form.trim().toLowerCase()));
+    const newForms = (data.forms ?? []).filter((f) => {
+      const key = f.form.trim().toLowerCase();
+      if (key.length === 0 || seenForms.has(key)) {
+        return false;
+      }
+      seenForms.add(key);
+      return true;
+    });
+    if (newForms.length > 0) {
+      await executor.insert(vocabularyForms).values(
+        newForms.map((form) => ({
+          userId,
+          vocabularyItemId,
+          form: form.form,
+          formType: form.formType,
+          grammarNote: form.grammarNote,
+        })),
+      );
+    }
+
+    const seenTopics = new Set<string>();
+    for (const name of data.topics ?? []) {
+      const normalized = normalizeTopicName(name);
+      if (normalized.length === 0 || seenTopics.has(normalized)) {
+        continue;
+      }
+      seenTopics.add(normalized);
+      const topic = await this.topicsRepo.findOrCreate(userId, name, executor);
+      await executor
+        .insert(vocabularyTopics)
+        .values({ userId, vocabularyItemId, topicId: topic.id })
+        .onConflictDoNothing();
+    }
+
+    if (data.source) {
+      await executor.insert(wordSources).values({
+        userId,
+        vocabularyItemId,
+        lessonId: data.source.lessonId,
+        sourceType: data.source.sourceType,
+        sourceText: data.source.sourceText,
+      });
+    }
   }
 
   /**

@@ -86,7 +86,8 @@ h2 {
 }
 
 input,
-select {
+select,
+textarea {
   background: #0f0f15;
   color: var(--foreground);
   border: 1px solid #2d2d38;
@@ -96,8 +97,14 @@ select {
   width: 100%;
 }
 
+textarea {
+  resize: vertical;
+  min-height: 8rem;
+}
+
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: 0;
 }

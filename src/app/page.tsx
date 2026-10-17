@@ -8,6 +8,9 @@ export default function HomePage() {
       <p>
         <Link href="/vocabulary">Manage vocabulary →</Link>
       </p>
+      <p>
+        <Link href="/import">Import from lesson notes →</Link>
+      </p>
     </main>
   );
 }
