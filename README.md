@@ -32,6 +32,16 @@ npm run dev
 Then open http://localhost:3000. A public health check is available at
 http://localhost:3000/api/health.
 
+To reach the app from another device on the same network (for example, to
+install the PWA on an iPhone), bind the dev server to all interfaces:
+
+```bash
+npm run dev:lan
+```
+
+Then open `http://<your-computer-ip>:3000` on the phone. The default
+`npm run dev` binds to localhost only, so the LAN address is unreachable.
+
 Local development runs with no AWS credentials and no paid AI calls:
 `AI_PROVIDER=mock` is the default.
 
@@ -79,6 +89,7 @@ containers, on next start).
 | Command                | Description                               |
 | ---------------------- | ----------------------------------------- |
 | `npm run dev`          | Start the Next.js dev server (hot reload) |
+| `npm run dev:lan`      | Dev server on all interfaces (LAN/iPhone) |
 | `npm run build`        | Production build                          |
 | `npm start`            | Run the production build                  |
 | `npm run lint`         | ESLint                                    |
