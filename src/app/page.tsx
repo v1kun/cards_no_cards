@@ -17,6 +17,9 @@ export default function HomePage() {
       <p>
         <Link href="/install">Install on your iPhone →</Link>
       </p>
+      <p>
+        <Link href="/shortcuts">Voice capture with Siri →</Link>
+      </p>
     </main>
   );
 }

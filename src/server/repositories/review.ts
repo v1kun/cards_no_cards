@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/server/db/client";
@@ -241,6 +241,39 @@ export class ReviewRepository {
       .orderBy(desc(vocabularyItems.createdAt))
       .limit(limit);
     return rows.map((row) => row.translation);
+  }
+
+  /** Count of active, already-introduced words whose review is due by `now`. */
+  async countDue(userId: string, now: Date): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(reviewStates)
+      .innerJoin(vocabularyItems, eq(vocabularyItems.id, reviewStates.vocabularyItemId))
+      .where(
+        and(
+          eq(reviewStates.userId, userId),
+          eq(vocabularyItems.status, "active"),
+          sql`${reviewStates.introducedAt} is not null`,
+          lte(reviewStates.dueAt, now),
+        ),
+      );
+    return row?.value ?? 0;
+  }
+
+  /** Count of active words never introduced yet (no state or null introduced). */
+  async countNew(userId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(vocabularyItems)
+      .leftJoin(reviewStates, eq(reviewStates.vocabularyItemId, vocabularyItems.id))
+      .where(
+        and(
+          eq(vocabularyItems.userId, userId),
+          eq(vocabularyItems.status, "active"),
+          or(isNull(reviewStates.id), isNull(reviewStates.introducedAt)),
+        ),
+      );
+    return row?.value ?? 0;
   }
 
   private itemColumns() {

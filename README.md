@@ -259,6 +259,28 @@ full-screen.
 - **Install steps**: open the site in Safari, tap **Share → Add to Home
   Screen**. The in-app guide lives at `/install`.
 
+## Voice capture (Siri / Apple Shortcuts)
+
+You can add words and ask what to practice by voice, without a native app, by
+pairing the iPhone **Shortcuts** app with two JSON endpoints. The in-app guide
+with ready-to-build recipes lives at `/shortcuts`.
+
+- **`POST /api/v1/capture`** — body `{ "text": "despedirse - to say goodbye" }`.
+  Dictated text is routed through the normal **import pipeline** tagged as a
+  `voice` source, so it is parsed and lands in Import as **needs-review** (voice
+  never writes confirmed vocabulary directly). Returns a short speakable
+  `message` for Siri to read back.
+- **`GET /api/v1/capture`** — returns `{ due, new, message }`, a speakable
+  summary of what is waiting to be practiced.
+
+Build a Shortcut with **Dictate Text → Get Contents of URL** (POST JSON to the
+capture endpoint) **→ Speak Text** (the returned `message`), then trigger it
+with *"Hey Siri"*. Because the dev auth provider authenticates every local
+request, Shortcuts on the same LAN need no token (run `npm run dev:lan` and use
+the Mac LAN address). A production deployment would require the deferred cloud
+auth, which Shortcuts cannot easily complete — so voice capture is a
+local-network convenience for now.
+
 ## AI provider
 
 AI features (parsing free text into vocabulary, generating example sentences,
