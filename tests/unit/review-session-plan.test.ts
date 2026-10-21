@@ -153,8 +153,8 @@ describe("pickDistractors", () => {
       word("w5", { topicIds: ["city"] }),
       word("w6", { topicIds: ["food"], partOfSpeech: "verb" }),
     ];
-    for (const seed of ["a", "b", "c", "d"]) {
-      const picked = pickDistractors(target, pool, false, seed);
+    for (const seed of [1, 2, 3, 4]) {
+      const picked = pickDistractors(target, pool, false, seeded(seed));
       expect(picked.slice(0, 2)).toEqual(["translation-w4", "translation-w3"]);
       expect(picked).toHaveLength(3);
       expect(picked).not.toContain("translation-w6");
@@ -163,7 +163,66 @@ describe("pickDistractors", () => {
 
   it("falls back to other words when the topic is too small", () => {
     const target = word("w1", { topicIds: ["animals"] });
-    const picked = pickDistractors(target, [target, word("w2"), word("w3")], true, "x");
+    const picked = pickDistractors(target, [target, word("w2"), word("w3")], true, seeded(1));
     expect(picked.sort()).toEqual(["lemma-w2", "lemma-w3"]);
   });
+
+  it("draws different wrong answers from the whole topic", () => {
+    const pool = Array.from({ length: 12 }, (_, i) => word(`a${i}`, { topicIds: ["animals"] }));
+    const sets = new Set(
+      [1, 2, 3, 4, 5, 6].map((seed) =>
+        pickDistractors(pool[0]!, pool, false, seeded(seed)).sort().join("|"),
+      ),
+    );
+    expect(sets.size).toBeGreaterThan(1);
+  });
 });
+
+describe("multiple-choice options", () => {
+  it("replaces stored bank options with same-topic words in random order", () => {
+    const words = Array.from({ length: 10 }, (_, i) => word(`w${i}`, { topicIds: ["animals"] }));
+    const bank = [
+      {
+        id: "b1",
+        vocabularyItemId: "w0",
+        exerciseType: "multiple_choice" as const,
+        sourceHash: "h",
+        payload: {
+          instruction: "Pick.",
+          promptText: "lemma-w0",
+          options: ["translation-w0", "stale-1", "stale-2", "stale-3"],
+          correctAnswer: "translation-w0",
+          acceptedAnswers: ["translation-w0"],
+        },
+      },
+    ];
+    const orders = new Set<string>();
+    for (const seed of [1, 2, 3, 4, 5, 6]) {
+      const [first] = planSession({
+        words,
+        states: new Map(),
+        bank,
+        now,
+        limits: { new: 1 },
+        random: seeded(seed),
+      });
+      expect(first!.bankItemId).toBe("b1");
+      expect(first!.options).toHaveLength(4);
+      expect(first!.options).toContain("translation-w0");
+      expect(first!.options!.some((option) => option.startsWith("stale"))).toBe(false);
+      orders.add(first!.options!.join("|"));
+    }
+    expect(orders.size).toBeGreaterThan(1);
+  });
+});
+
+/** Deterministic PRNG (mulberry32) for repeatable "random" tests. */
+function seeded(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}

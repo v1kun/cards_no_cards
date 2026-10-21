@@ -40,6 +40,8 @@ export type PlanInput = {
   now: Date;
   filter?: SectionFilter;
   limits?: { due?: number; new?: number };
+  /** Source of randomness for distractors and option order (tests pass a seeded one). */
+  random?: () => number;
 };
 
 export function matchesFilter(word: PlanWord, filter: SectionFilter): boolean {
@@ -70,6 +72,7 @@ function isDue(state: SchedulingState | undefined, now: Date): boolean {
  * otherwise a deterministic exercise is built from the word itself.
  */
 export function planSession(input: PlanInput): PracticeExercise[] {
+  const random = input.random ?? Math.random;
   const filter = input.filter ?? { kind: "all" };
   const dueLimit = input.limits?.due ?? DUE_REVIEW_LIMIT;
   const newLimit = input.limits?.new ?? NEW_WORD_TARGET;
@@ -108,9 +111,9 @@ export function planSession(input: PlanInput): PracticeExercise[] {
     const variants = items.filter((item) => item.exerciseType === type);
     if (variants.length > 0) {
       const chosen = variants[hashString(seed) % variants.length]!;
-      return bankItemToExercise(chosen, isNew);
+      return withFreshOptions(bankItemToExercise(chosen, isNew), word, input.words, random);
     }
-    return deterministicExercise(word, type, isNew, input.words, seed);
+    return deterministicExercise(word, type, isNew, input.words, random);
   };
 
   return [...due.map((word) => plan(word, false)), ...fresh.map((word) => plan(word, true))];
@@ -121,44 +124,68 @@ function deterministicExercise(
   type: ExerciseType,
   isNew: boolean,
   pool: PlanWord[],
-  seed: string,
+  random: () => number,
 ): PracticeExercise {
   if (!isMultipleChoice(type)) {
     return buildExercise(word, type, isNew);
   }
   const reverse = type === "multiple_choice_reverse";
-  const distractors = pickDistractors(word, pool, reverse, seed);
+  const distractors = pickDistractors(word, pool, reverse, random);
   // Multiple choice needs at least one distractor to be meaningful.
   if (distractors.length === 0) {
     return buildExercise(word, "recall", isNew);
   }
-  return buildExercise(word, type, isNew, distractors);
+  const exercise = buildExercise(word, type, isNew, distractors);
+  return { ...exercise, options: shuffle(exercise.options ?? [], random) };
 }
 
 /**
- * Picks distractors from the learner's other words, preferring words from
- * the same topic (then the same part of speech), with a seeded rotation so
- * options vary between sessions.
+ * Multiple-choice options are drawn afresh every session from the learner's
+ * whole vocabulary (same topic first) and shown in random order, so stored
+ * bank questions do not repeat the same set of wrong answers.
+ */
+function withFreshOptions(
+  exercise: PracticeExercise,
+  word: PlanWord,
+  pool: PlanWord[],
+  random: () => number,
+): PracticeExercise {
+  if (!isMultipleChoice(exercise.exerciseType) || !exercise.options) return exercise;
+  const reverse = exercise.exerciseType === "multiple_choice_reverse";
+  const correct = exercise.correctAnswer;
+  const distractors = pickDistractors(word, pool, reverse, random).filter(
+    (option) => normalizeAnswer(option) !== normalizeAnswer(correct),
+  );
+  const wrong =
+    distractors.length > 0
+      ? distractors
+      : exercise.options.filter((option) => normalizeAnswer(option) !== normalizeAnswer(correct));
+  return { ...exercise, options: shuffle([correct, ...wrong], random) };
+}
+
+/**
+ * Picks random distractors from the learner's other words, preferring the
+ * same topic and part of speech, then the same topic, then the same part of
+ * speech, then anything — chosen at random within each group.
  */
 export function pickDistractors(
   word: PlanWord,
   pool: PlanWord[],
   reverse: boolean,
-  seed: string,
+  random: () => number = Math.random,
   max = MAX_DISTRACTORS,
 ): string[] {
   const value = (candidate: PlanWord) => (reverse ? candidate.lemma : candidate.translation);
   const correctKey = normalizeAnswer(value(word));
-  const others = pool.filter((candidate) => candidate.id !== word.id);
-  if (others.length === 0) return [];
-  const offset = hashString(seed) % others.length;
-  const rotated = [...others.slice(offset), ...others.slice(0, offset)];
   const topics = new Set(word.topicIds);
   const rank = (candidate: PlanWord) =>
     (candidate.topicIds.some((id) => topics.has(id)) ? 0 : 2) +
     (candidate.partOfSpeech === word.partOfSpeech ? 0 : 1);
-  // Stable sort keeps the seeded rotation within each rank.
-  const ordered = [...rotated].sort((a, b) => rank(a) - rank(b));
+  // Stable sort keeps the random order within each rank.
+  const ordered = shuffle(
+    pool.filter((candidate) => candidate.id !== word.id),
+    random,
+  ).sort((a, b) => rank(a) - rank(b));
   const seen = new Set<string>([correctKey]);
   const picked: string[] = [];
   for (const candidate of ordered) {
@@ -170,6 +197,16 @@ export function pickDistractors(
     if (picked.length >= max) break;
   }
   return picked;
+}
+
+/** Fisher–Yates shuffle into a new array. */
+function shuffle<T>(items: readonly T[], random: () => number): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [result[i], result[j]] = [result[j]!, result[i]!];
+  }
+  return result;
 }
 
 function hashString(input: string): number {
