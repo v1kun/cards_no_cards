@@ -136,8 +136,9 @@ function deterministicExercise(
 }
 
 /**
- * Picks distractors from the learner's other words, preferring the same
- * part of speech, with a seeded rotation so options vary between sessions.
+ * Picks distractors from the learner's other words, preferring words from
+ * the same topic (then the same part of speech), with a seeded rotation so
+ * options vary between sessions.
  */
 export function pickDistractors(
   word: PlanWord,
@@ -152,10 +153,12 @@ export function pickDistractors(
   if (others.length === 0) return [];
   const offset = hashString(seed) % others.length;
   const rotated = [...others.slice(offset), ...others.slice(0, offset)];
-  const ordered = [
-    ...rotated.filter((candidate) => candidate.partOfSpeech === word.partOfSpeech),
-    ...rotated.filter((candidate) => candidate.partOfSpeech !== word.partOfSpeech),
-  ];
+  const topics = new Set(word.topicIds);
+  const rank = (candidate: PlanWord) =>
+    (candidate.topicIds.some((id) => topics.has(id)) ? 0 : 2) +
+    (candidate.partOfSpeech === word.partOfSpeech ? 0 : 1);
+  // Stable sort keeps the seeded rotation within each rank.
+  const ordered = [...rotated].sort((a, b) => rank(a) - rank(b));
   const seen = new Set<string>([correctKey]);
   const picked: string[] = [];
   for (const candidate of ordered) {

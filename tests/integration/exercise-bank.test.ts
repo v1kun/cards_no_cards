@@ -54,6 +54,35 @@ describe("ExerciseBankService", () => {
     expect(await bank.listForUser(otherUser)).toHaveLength(0);
   });
 
+  it("sends same-topic words to the AI as distractor candidates", async () => {
+    const gato = await addWord("gato", "cat");
+    const perro = await addWord("perro", "dog");
+    const pan = await addWord("pan", "bread");
+    await vocab.setTopics(userId, gato.id, ["Animals"]);
+    await vocab.setTopics(userId, perro.id, ["Animals"]);
+    await vocab.setTopics(userId, pan.id, ["Food"]);
+    const provider = new MockAIProvider();
+    const calls: Parameters<AIProvider["generateExercises"]>[0][] = [];
+    const original = provider.generateExercises.bind(provider);
+    provider.generateExercises = (input) => {
+      calls.push(input);
+      return original(input);
+    };
+    await new ExerciseBankService(db, provider).refresh(userId);
+
+    const sent = calls.flatMap((call) => call.words);
+    const forGato = sent.find((word) => word.key === gato.id)!;
+    expect(forGato.topics).toEqual(["Animals"]);
+    expect(forGato.topicWords).toEqual([{ lemma: "perro", translation: "dog" }]);
+    expect(sent.find((word) => word.key === pan.id)!.topicWords).toEqual([]);
+
+    const choice = (await bank.listForUser(userId)).find(
+      (item) => item.vocabularyItemId === gato.id && item.exerciseType === "multiple_choice",
+    );
+    expect(choice?.payload.options).toContain("dog");
+    expect(choice?.payload.options).not.toContain("bread");
+  });
+
   it("marks words stale after their content changes", async () => {
     const word = await addWord("casa", "house");
     const service = new ExerciseBankService(db, new MockAIProvider());

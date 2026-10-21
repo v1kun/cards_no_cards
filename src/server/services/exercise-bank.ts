@@ -16,6 +16,54 @@ const AI_CHUNK_SIZE = 5;
 /** Upper bound on stored questions per word, per type. */
 const MAX_VARIANTS_PER_TYPE = 2;
 
+/** Same-topic words passed to the AI as multiple-choice distractor candidates. */
+const MAX_TOPIC_WORDS = 12;
+
+type TopicContext = (word: PracticeWord) => {
+  topics: string[];
+  topicWords: { lemma: string; translation: string }[];
+};
+
+/**
+ * Builds, per word, its topic names and a deterministic sample of other
+ * words from the same topics, so generated distractors stay on topic.
+ */
+export function topicContext(
+  words: PracticeWord[],
+  topics: { id: string; name: string }[],
+): TopicContext {
+  const names = new Map(topics.map((topic) => [topic.id, topic.name]));
+  const byTopic = new Map<string, PracticeWord[]>();
+  for (const word of words) {
+    for (const topicId of word.topicIds) {
+      const list = byTopic.get(topicId) ?? [];
+      list.push(word);
+      byTopic.set(topicId, list);
+    }
+  }
+  return (word) => {
+    const seen = new Set<string>([word.id]);
+    const neighbours: PracticeWord[] = [];
+    for (const topicId of word.topicIds) {
+      for (const other of byTopic.get(topicId) ?? []) {
+        if (seen.has(other.id)) continue;
+        seen.add(other.id);
+        neighbours.push(other);
+      }
+    }
+    neighbours.sort(
+      (a, b) =>
+        Number(b.partOfSpeech === word.partOfSpeech) - Number(a.partOfSpeech === word.partOfSpeech),
+    );
+    return {
+      topics: word.topicIds.flatMap((id) => names.get(id) ?? []),
+      topicWords: neighbours
+        .slice(0, MAX_TOPIC_WORDS)
+        .map((other) => ({ lemma: other.lemma, translation: other.translation })),
+    };
+  };
+}
+
 export type BankStatus = {
   totalWords: number;
   upToDate: number;
@@ -55,7 +103,7 @@ export class ExerciseBankService {
 
   /** Classifies each active word as up to date, missing, or stale. */
   private async classify(userId: string) {
-    const [{ words }, language] = await Promise.all([
+    const [{ words, topics }, language] = await Promise.all([
       loadPracticeData(this.db, userId),
       this.translationLanguage(userId),
     ]);
@@ -75,7 +123,7 @@ export class ExerciseBankService {
       else if (hashes.has(wordSourceHash(word, language))) upToDate.push(word);
       else stale.push(word);
     }
-    return { words, language, upToDate, missing, stale };
+    return { words, topics, language, upToDate, missing, stale };
   }
 
   async status(userId: string): Promise<BankStatus> {
@@ -95,7 +143,8 @@ export class ExerciseBankService {
    * `exclude` lets the client skip words that already failed this run.
    */
   async refresh(userId: string, options: { exclude?: string[] } = {}): Promise<RefreshResult> {
-    const { language, missing, stale } = await this.classify(userId);
+    const { words, topics, language, missing, stale } = await this.classify(userId);
+    const context = topicContext(words, topics);
     const excluded = new Set(options.exclude ?? []);
     const queue = [...missing, ...stale].filter((word) => !excluded.has(word.id));
     const batch = queue.slice(0, REFRESH_BATCH_SIZE);
@@ -104,7 +153,7 @@ export class ExerciseBankService {
     let succeeded = 0;
     for (let i = 0; i < batch.length; i += AI_CHUNK_SIZE) {
       const chunk = batch.slice(i, i + AI_CHUNK_SIZE);
-      const results = await this.generateFor(chunk, language);
+      const results = await this.generateFor(chunk, language, context);
       for (const word of chunk) {
         const exercises = results.get(word.id) ?? [];
         if (exercises.length === 0) {
@@ -140,11 +189,12 @@ export class ExerciseBankService {
       .limit(1);
     if (!owned[0]) throw new NotFoundError("Vocabulary item", vocabularyItemId);
 
-    const { words, language } = await this.classify(userId);
+    const { words, topics, language } = await this.classify(userId);
     const word = words.find((candidate) => candidate.id === vocabularyItemId);
     if (!word) throw new NotFoundError("Vocabulary item", vocabularyItemId);
 
-    const exercises = (await this.generateFor([word], language)).get(word.id) ?? [];
+    const context = topicContext(words, topics);
+    const exercises = (await this.generateFor([word], language, context)).get(word.id) ?? [];
     if (exercises.length > 0) {
       await this.bank.replaceForWord(
         this.db,
@@ -166,6 +216,7 @@ export class ExerciseBankService {
   private async generateFor(
     words: PracticeWord[],
     language: string,
+    context: TopicContext,
   ): Promise<Map<string, NewBankExercise[]>> {
     const sets = await this.requireProvider().generateExercises({
       words: words.map((word) => ({
@@ -175,6 +226,7 @@ export class ExerciseBankService {
         partOfSpeech: word.partOfSpeech,
         forms: word.forms ?? [],
         exampleSentence: word.exampleSentence,
+        ...context(word),
       })),
       translationLanguage: language,
     });

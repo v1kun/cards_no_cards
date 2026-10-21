@@ -66,6 +66,13 @@ export type ExerciseGenerationWord = {
   partOfSpeech: string;
   forms: string[];
   exampleSentence?: string | null;
+  /** Topic names the word belongs to. */
+  topics?: string[];
+  /**
+   * Other words from the same topic(s). Multiple-choice distractors should
+   * be taken from these (or at least from the same topic).
+   */
+  topicWords?: { lemma: string; translation: string }[];
 };
 
 export const generatedExerciseSchema = z.object({

@@ -229,6 +229,9 @@ export class OpenAIProvider implements AIProvider {
       `  options are 4 ${language} meanings (one correct, three plausible but clearly wrong).`,
       `- 2 "multiple_choice_reverse": promptText is the ${language} meaning, options are 4`,
       "  Spanish words of the same part of speech (one correct).",
+      "Wrong options must come from the same topic as the word (e.g. other animals for an",
+      "animal): take them from the word's topicWords when given (their translation or lemma),",
+      "otherwise invent words of that topic. Never use a synonym of the correct answer.",
       `- 1 "recall": promptText is the ${language} meaning; the learner types the Spanish word.`,
       `- 2 "cloze": promptText is a NEW short natural Spanish sentence with the word replaced`,
       `  by "_____" followed by the ${language} hint in parentheses; the answer is the exact`,
@@ -246,6 +249,8 @@ export class OpenAIProvider implements AIProvider {
         partOfSpeech: word.partOfSpeech,
         forms: word.forms,
         example: word.exampleSentence ?? undefined,
+        topics: word.topics?.length ? word.topics : undefined,
+        topicWords: word.topicWords?.length ? word.topicWords : undefined,
       })),
     });
 

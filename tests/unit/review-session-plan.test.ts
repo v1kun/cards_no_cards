@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { BankItem } from "@/domain/review/bank";
 import { initialSchedulingState, type SchedulingState } from "@/domain/review/schedule";
-import { planSession, summarizeSections, type PlanWord } from "@/domain/review/session-plan";
+import {
+  pickDistractors,
+  planSession,
+  summarizeSections,
+  type PlanWord,
+} from "@/domain/review/session-plan";
 
 const now = new Date("2026-02-01T00:00:00Z");
 
@@ -134,5 +139,31 @@ describe("summarizeSections", () => {
       partOfSpeech: "noun",
       counts: { total: 2, learned: 0, due: 1, new: 1 },
     });
+  });
+});
+
+describe("pickDistractors", () => {
+  it("prefers the same topic over the same part of speech", () => {
+    const target = word("w1", { topicIds: ["animals"] });
+    const pool = [
+      target,
+      word("w2", { topicIds: ["food"] }),
+      word("w3", { topicIds: ["animals"], partOfSpeech: "adjective" }),
+      word("w4", { topicIds: ["animals"] }),
+      word("w5", { topicIds: ["city"] }),
+      word("w6", { topicIds: ["food"], partOfSpeech: "verb" }),
+    ];
+    for (const seed of ["a", "b", "c", "d"]) {
+      const picked = pickDistractors(target, pool, false, seed);
+      expect(picked.slice(0, 2)).toEqual(["translation-w4", "translation-w3"]);
+      expect(picked).toHaveLength(3);
+      expect(picked).not.toContain("translation-w6");
+    }
+  });
+
+  it("falls back to other words when the topic is too small", () => {
+    const target = word("w1", { topicIds: ["animals"] });
+    const picked = pickDistractors(target, [target, word("w2"), word("w3")], true, "x");
+    expect(picked.sort()).toEqual(["lemma-w2", "lemma-w3"]);
   });
 });
