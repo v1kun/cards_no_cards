@@ -10,7 +10,7 @@
  * IndexedDB and is managed by the app itself.
  */
 
-const CACHE = "cnc-static-v2";
+const CACHE = "cnc-static-v3";
 
 const STATIC_PREFIXES = ["/_next/static/", "/icons/"];
 const STATIC_EXACT = ["/manifest.webmanifest"];
@@ -18,25 +18,33 @@ const STATIC_EXACT = ["/manifest.webmanifest"];
 /** Pages that work offline; their HTML shell is cached on every online visit. */
 const OFFLINE_PAGES = ["/", "/practice", "/practice/session"];
 
+/**
+ * Caches the shells of offline pages that are not cached yet (best effort).
+ * Runs on install and after every successful online page load, because pages
+ * redirect to /login until the user signs in — a shell fetched then is not
+ * storable, so it is retried once a session exists.
+ */
+async function warmShells(cache) {
+  await Promise.all(
+    OFFLINE_PAGES.map(async (path) => {
+      if (await cache.match(path)) return;
+      try {
+        const response = await fetch(path, { credentials: "same-origin" });
+        if (!isStorableShell(response)) return;
+        const html = await response.clone().text();
+        await cache.put(path, response);
+        await cacheReferencedAssets(cache, html);
+      } catch {
+        /* offline */
+      }
+    }),
+  );
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
-      // Best effort: warm the page shells so practice works offline even
-      // before the user has visited every page. Failures are ignored.
-      const cache = await caches.open(CACHE);
-      await Promise.all(
-        OFFLINE_PAGES.map(async (path) => {
-          try {
-            const response = await fetch(path, { credentials: "same-origin" });
-            if (!isStorableShell(response)) return;
-            const html = await response.clone().text();
-            await cache.put(path, response);
-            await cacheReferencedAssets(cache, html);
-          } catch {
-            /* offline during install */
-          }
-        }),
-      );
+      await warmShells(await caches.open(CACHE));
       await self.skipWaiting();
     })(),
   );
@@ -111,11 +119,15 @@ function isStorableShell(response) {
   );
 }
 
-async function handleNavigation(request, path) {
+async function handleNavigation(event, path) {
+  const { request } = event;
   const cache = await caches.open(CACHE);
   try {
     const response = await fetch(request);
-    if (isStorableShell(response)) await cache.put(path, response.clone());
+    if (isStorableShell(response)) {
+      await cache.put(path, response.clone());
+      event.waitUntil(warmShells(cache));
+    }
     return response;
   } catch (error) {
     const cached = (await cache.match(path)) || (await cache.match("/practice"));
@@ -146,7 +158,7 @@ self.addEventListener("fetch", (event) => {
     const path = normalizePath(url.pathname);
     event.respondWith(
       OFFLINE_PAGES.includes(path)
-        ? handleNavigation(request, path)
+        ? handleNavigation(event, path)
         : fetch(request).catch(() => offlinePage()),
     );
     return;
