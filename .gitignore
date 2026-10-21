@@ -61,3 +61,6 @@ Thumbs.db
 # Misc
 .vercel
 *.tsbuildinfo
+
+# Local server runtime (service.sh)
+/.run/
