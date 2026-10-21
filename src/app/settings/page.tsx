@@ -1,0 +1,109 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { PageHeader, Spinner } from "@/components/ui";
+import { ApiClientError } from "@/lib/client/api";
+import { getPracticeEngine } from "@/lib/client/practice";
+import {
+  getProfile,
+  updateProfile,
+  type Profile,
+  type TranslationLanguage,
+} from "@/lib/client/profile";
+
+const LANGUAGES: { value: TranslationLanguage; label: string; native: string; flag: string }[] = [
+  { value: "en", label: "English", native: "English", flag: "🇬🇧" },
+  { value: "ru", label: "Russian", native: "Русский", flag: "🇷🇺" },
+];
+
+export default function SettingsPage() {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [saving, setSaving] = useState<TranslationLanguage | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getProfile()
+      .then(setProfile)
+      .catch((caught: unknown) =>
+        setError(
+          caught instanceof ApiClientError && caught.status === 0
+            ? "You are offline. Settings need a connection."
+            : "Could not load your settings.",
+        ),
+      );
+  }, []);
+
+  const choose = async (value: TranslationLanguage) => {
+    if (!profile || value === profile.translationLanguage) return;
+    setSaving(value);
+    setError(null);
+    setMessage(null);
+    try {
+      setProfile(await updateProfile({ translationLanguage: value }));
+      setMessage(
+        "Saved. Generate questions again on the Practice page so prepared questions use this language.",
+      );
+      void getPracticeEngine()
+        .refresh()
+        .catch(() => undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <main>
+      <PageHeader title="Settings" back={{ href: "/", label: "Home" }} />
+
+      <section className="card stack" aria-labelledby="lang-title">
+        <div className="stack" style={{ gap: "0.25rem" }}>
+          <h2 id="lang-title">Translation language</h2>
+          <p className="muted small">
+            The language used for translations of new words, generated questions and section names.
+            Words you already added keep their existing translations.
+          </p>
+        </div>
+        {!profile && !error ? (
+          <p className="muted row center">
+            <Spinner /> Loading…
+          </p>
+        ) : null}
+        {profile ? (
+          <div className="options" role="radiogroup" aria-label="Translation language">
+            {LANGUAGES.map((language) => {
+              const selected = profile.translationLanguage === language.value;
+              return (
+                <button
+                  key={language.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  className={`option${selected ? " correct" : ""}`}
+                  disabled={saving !== null}
+                  onClick={() => void choose(language.value)}
+                >
+                  <span aria-hidden="true" style={{ fontSize: "1.3rem" }}>
+                    {language.flag}
+                  </span>
+                  <span style={{ flex: 1 }}>
+                    {language.native}
+                    {language.native !== language.label ? (
+                      <span className="muted small"> · {language.label}</span>
+                    ) : null}
+                  </span>
+                  {saving === language.value ? <Spinner /> : selected ? <span>✓</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {message ? <p className="notice small">{message}</p> : null}
+        {error ? <p className="error small">{error}</p> : null}
+      </section>
+    </main>
+  );
+}

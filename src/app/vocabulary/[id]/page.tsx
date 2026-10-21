@@ -1,9 +1,8 @@
 "use client";
-
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { PageHeader } from "@/components/ui";
 import { ApiClientError } from "@/lib/client/api";
 import {
   archiveVocabulary,
@@ -136,9 +135,7 @@ export default function VocabularyDetailPage() {
   if (error || !item || !edit) {
     return (
       <main>
-        <p>
-          <Link href="/vocabulary">← Vocabulary</Link>
-        </p>
+        <PageHeader title="Word" back={{ href: "/vocabulary", label: "Vocabulary" }} />
         <div className="error-box">
           <p className="error">{error ?? "This word is unavailable."}</p>
           <button type="button" onClick={() => void load()}>
@@ -153,12 +150,14 @@ export default function VocabularyDetailPage() {
 
   return (
     <main>
-      <p>
-        <Link href="/vocabulary">← Vocabulary</Link>
-      </p>
-      <h1>
-        {item.lemma} {item.status === "archived" && <span className="tag warn">archived</span>}
-      </h1>
+      <PageHeader
+        title={
+          <>
+            {item.lemma} {item.status === "archived" && <span className="tag warn">archived</span>}
+          </>
+        }
+        back={{ href: "/vocabulary", label: "Vocabulary" }}
+      />
 
       <section className="card" aria-label="Edit word">
         <h2>Edit</h2>

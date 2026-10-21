@@ -58,6 +58,37 @@ export const answerEvaluationSchema = z.object({
 
 export type AnswerEvaluation = z.infer<typeof answerEvaluationSchema>;
 
+/** A word to generate practice questions for. `key` echoes back in the output. */
+export type ExerciseGenerationWord = {
+  key: string;
+  lemma: string;
+  translation: string;
+  partOfSpeech: string;
+  forms: string[];
+  exampleSentence?: string | null;
+};
+
+export const generatedExerciseSchema = z.object({
+  exerciseType: z.string(),
+  instruction: z.string(),
+  promptText: z.string(),
+  options: z.array(z.string()).optional(),
+  correctAnswer: z.string(),
+  acceptedAnswers: z.array(z.string()),
+});
+
+export type GeneratedExercise = z.infer<typeof generatedExerciseSchema>;
+
+/**
+ * Raw generated questions per word. Structurally parsed only; domain
+ * validation (answer among options, no leaks, cloze blank) happens in the
+ * bank service, which drops anything unusable.
+ */
+export type GeneratedExerciseSet = {
+  key: string;
+  exercises: GeneratedExercise[];
+};
+
 export type ExistingVocabularyCandidate = {
   id: string;
   lemma: string;
@@ -86,4 +117,14 @@ export interface AIProvider {
     userAnswer: string;
     context?: string;
   }): Promise<AnswerEvaluation>;
+
+  /**
+   * Generates a small set of practice questions for each word, in one
+   * request for the whole batch. Translations and instructions are written
+   * in `translationLanguage` ("en" or "ru").
+   */
+  generateExercises(input: {
+    words: ExerciseGenerationWord[];
+    translationLanguage: string;
+  }): Promise<GeneratedExerciseSet[]>;
 }

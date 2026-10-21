@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
+import { AIProviderError } from "@/server/ai/errors";
 import { UnauthorizedError } from "@/server/auth/errors";
 import type { AuthSession } from "@/server/auth/types";
 import { requireSession } from "@/server/auth/session";
@@ -25,6 +26,7 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   | "FORBIDDEN"
   | "CONFLICT"
+  | "AI_UNAVAILABLE"
   | "INTERNAL";
 
 const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
@@ -33,6 +35,7 @@ const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
   NOT_FOUND: 404,
   FORBIDDEN: 403,
   CONFLICT: 409,
+  AI_UNAVAILABLE: 503,
   INTERNAL: 500,
 };
 
@@ -87,6 +90,10 @@ export function handleRouteError(error: unknown): NextResponse {
   }
   if (error instanceof ConflictError) {
     return fail("CONFLICT", error.message);
+  }
+  if (error instanceof AIProviderError) {
+    console.error("AI provider error:", error.message);
+    return fail("AI_UNAVAILABLE", "The AI service is unavailable. Please try again later.");
   }
 
   console.error("Unhandled route error:", error);

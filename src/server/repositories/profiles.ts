@@ -3,12 +3,14 @@ import { z } from "zod";
 
 import type { Database } from "@/server/db/client";
 import {
+  exerciseBankItems,
   importBatches,
   importItems,
   lessons,
   practiceSessions,
   profiles,
   reviewAttempts,
+  translationLanguages,
   reviewStates,
   topics,
   vocabularyForms,
@@ -23,6 +25,7 @@ export type Profile = typeof profiles.$inferSelect;
 
 export const updateProfileSchema = z.object({
   preferredLocale: z.string().min(2).max(10).optional(),
+  translationLanguage: z.enum(translationLanguages).optional(),
   timezone: z.string().min(1).max(64).nullish(),
   onboardingCompletedAt: z.date().nullish(),
 });
@@ -63,6 +66,9 @@ export class ProfilesRepository {
   async update(userId: string, input: UpdateProfileInput): Promise<Profile> {
     const changes: Partial<typeof profiles.$inferInsert> = {};
     if (input.preferredLocale !== undefined) changes.preferredLocale = input.preferredLocale;
+    if (input.translationLanguage !== undefined) {
+      changes.translationLanguage = input.translationLanguage;
+    }
     if (input.timezone !== undefined) changes.timezone = input.timezone ?? null;
     if (input.onboardingCompletedAt !== undefined) {
       changes.onboardingCompletedAt = input.onboardingCompletedAt ?? null;
@@ -97,6 +103,7 @@ export class ProfilesRepository {
 
     await this.db.transaction(async (tx) => {
       const scoped = [
+        exerciseBankItems,
         reviewAttempts,
         reviewStates,
         vocabularyTopics,

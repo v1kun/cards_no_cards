@@ -19,6 +19,7 @@ function stubProvider(
     parseVocabulary: typeof proposals === "function" ? proposals : async () => proposals,
     generateExample: base.generateExample.bind(base),
     evaluateAnswer: base.evaluateAnswer.bind(base),
+    generateExercises: base.generateExercises.bind(base),
   };
 }
 

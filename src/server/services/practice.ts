@@ -1,396 +1,285 @@
-import { inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import type { AIProvider } from "@/server/ai/types";
-import type { Database } from "@/server/db/client";
-import { reviewAttempts, reviewStates, vocabularyForms } from "@/server/db/schema";
-import { NotFoundError } from "@/server/repositories/errors";
-import { ReviewRepository, type PracticeSession } from "@/server/repositories/review";
-import { VocabularyRepository } from "@/server/repositories/vocabulary";
+import { wordSourceHash } from "@/domain/review/bank";
+import { acceptedAnswers, exerciseTypes, gradeAnswer } from "@/domain/review/exercises";
 import {
-  acceptedAnswers,
-  buildPrompt,
-  type ExercisePrompt,
-  type ExerciseType,
-  type ExerciseWord,
-  exerciseTypes,
-  expectedMeaning,
-  gradeObjective,
-  normalizeAnswer,
-  selectExerciseType,
-} from "@/domain/review/exercises";
-import {
-  nextSchedulingState,
+  initialSchedulingState,
   type ReviewResult,
   type SchedulingState,
 } from "@/domain/review/schedule";
+import {
+  applyAnswer,
+  toSnapshotState,
+  type PracticeSnapshot,
+  type SnapshotState,
+} from "@/domain/review/snapshot";
+import type { Database } from "@/server/db/client";
+import { practiceSessions, reviewAttempts, reviewStates } from "@/server/db/schema";
+import { ExerciseBankRepository } from "@/server/repositories/exercise-bank";
+import { ProfilesRepository } from "@/server/repositories/profiles";
+import { loadPracticeData, type ReviewStateRow } from "./practice-data";
 
-/** Target number of new words to introduce per session, availability allowing. */
-export const NEW_WORD_TARGET = 5;
-/** Upper bound on due reviews pulled into a single session. */
-export const DUE_REVIEW_LIMIT = 20;
-const DISTRACTOR_POOL_SIZE = 50;
-const MAX_DISTRACTORS = 3;
+/** Offline answers older than this are clamped; protects the schedule from bad clocks. */
+export const MAX_OFFLINE_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const MAX_SYNC_ATTEMPTS = 500;
+const MAX_SYNC_SESSIONS = 100;
 
-export const submitAttemptSchema = z.object({
-  sessionId: z.string().min(1),
-  vocabularyItemId: z.string().min(1),
-  exerciseType: z.enum(exerciseTypes),
-  submittedAnswer: z.string().optional(),
-  usedHint: z.boolean().default(false),
-  skipped: z.boolean().default(false),
-  latencyMs: z.number().int().nonnegative().optional(),
-  /** Client-generated id making re-submission idempotent. */
-  attemptId: z.string().min(1).optional(),
+const idSchema = z.string().trim().min(8).max(64);
+
+export const syncInputSchema = z.object({
+  sessions: z
+    .array(
+      z.object({
+        id: idSchema,
+        startedAt: z.number().int().nonnegative(),
+        finishedAt: z.number().int().nonnegative().nullable().optional(),
+      }),
+    )
+    .max(MAX_SYNC_SESSIONS)
+    .default([]),
+  attempts: z
+    .array(
+      z.object({
+        attemptId: idSchema,
+        sessionId: idSchema.nullable().optional(),
+        vocabularyItemId: z.string().min(1).max(64),
+        exerciseType: z.enum(exerciseTypes),
+        bankItemId: z.string().min(1).max(64).nullable().optional(),
+        submittedAnswer: z.string().max(500).nullable().optional(),
+        usedHint: z.boolean().default(false),
+        skipped: z.boolean().default(false),
+        latencyMs: z.number().int().nonnegative().max(3_600_000).nullable().optional(),
+        answeredAt: z.number().int().nonnegative(),
+      }),
+    )
+    .max(MAX_SYNC_ATTEMPTS)
+    .default([]),
 });
 
-export type SubmitAttemptInput = z.input<typeof submitAttemptSchema>;
+export type SyncInput = z.input<typeof syncInputSchema>;
 
-export type SessionPlan = {
-  session: PracticeSession | null;
-  exercises: ExercisePrompt[];
-};
-
-export type Reinforcement = {
-  correctAnswer: string;
-  exampleSentence: string | null;
-  exampleTranslation: string | null;
-};
-
-export type AttemptOutcome =
-  | {
-      status: "graded";
-      result: ReviewResult;
-      correct: boolean;
-      feedback: string;
-      correctAnswer: string;
-      reinforcement: Reinforcement | null;
-      nextDueAt: string | null;
-      duplicate: boolean;
-    }
-  | {
-      // An uncertain AI evaluation must not automatically punish the learner.
-      status: "uncertain";
-      feedback: string;
-    };
-
-export type SessionSummary = {
-  sessionId: string;
-  wordsPracticed: number;
-  totalAttempts: number;
-  recalled: number;
-  recalledWithHint: number;
-  wrong: number;
-  skipped: number;
+export type SyncResult = {
+  accepted: { attemptId: string; result: ReviewResult; duplicate: boolean }[];
+  rejected: { attemptId: string; reason: "word_unavailable" | "id_conflict" }[];
+  states: SnapshotState[];
+  serverTime: number;
 };
 
 /**
- * Orchestrates a practice session: selecting words, building exercises, grading
- * answers (deterministically, with the AI adapter only for open-ended recall),
- * and persisting attempts and deterministic scheduling updates.
+ * Practice runs on the client from an offline snapshot; this service builds
+ * that snapshot and applies the answers the client syncs back. Grading is
+ * deterministic and re-done here — the client result is never trusted.
  */
 export class PracticeService {
-  private readonly reviews: ReviewRepository;
-  private readonly vocabulary: VocabularyRepository;
+  private readonly bank: ExerciseBankRepository;
+  private readonly profiles: ProfilesRepository;
 
-  constructor(
-    private readonly db: Database,
-    private readonly provider?: AIProvider,
-  ) {
-    this.reviews = new ReviewRepository(db);
-    this.vocabulary = new VocabularyRepository(db);
+  constructor(private readonly db: Database) {
+    this.bank = new ExerciseBankRepository(db);
+    this.profiles = new ProfilesRepository(db);
   }
 
-  /**
-   * Starts a session. Due reviews are prioritized over introducing new words.
-   * Returns a null session (and no exercises) when nothing is available so the
-   * caller can show an empty state without creating a throwaway session.
-   */
-  async startSession(userId: string, now: Date = new Date()): Promise<SessionPlan> {
-    const due = await this.reviews.listDueReviews(userId, now, DUE_REVIEW_LIMIT);
-    const introduced = await this.reviews.listNewWords(userId, NEW_WORD_TARGET);
-    const selected = [...due, ...introduced];
-
-    if (selected.length === 0) {
-      return { session: null, exercises: [] };
-    }
-
-    const session = await this.reviews.createSession(userId);
-    const formsById = await this.formsFor(selected.map((word) => word.item.id));
-    const pool = await this.reviews.translationPool(userId, DISTRACTOR_POOL_SIZE);
-
-    const exercises = selected.map((word) => {
-      const exerciseWord: ExerciseWord = {
-        ...word.item,
-        forms: formsById.get(word.item.id) ?? [],
-      };
-      const successfulRecalls = word.state?.successfulRecalls ?? 0;
-      let type = selectExerciseType({
-        isNew: word.isNew,
-        successfulRecalls,
-        exampleSentence: word.item.exampleSentence,
-        lemma: word.item.lemma,
-      });
-      const distractors =
-        type === "multiple_choice" ? this.pickDistractors(word.item.translation, pool) : [];
-      // Multiple choice needs at least one distractor to be meaningful.
-      if (type === "multiple_choice" && distractors.length === 0) {
-        type = "recall";
-      }
-      return buildPrompt(exerciseWord, type, word.isNew, distractors);
-    });
-
-    return { session, exercises };
-  }
-
-  /** Grades a single attempt, persists it, and updates scheduling. */
-  async submitAttempt(userId: string, input: SubmitAttemptInput): Promise<AttemptOutcome> {
-    const data = submitAttemptSchema.parse(input);
-
-    const session = await this.reviews.getSession(userId, data.sessionId);
-    if (!session) {
-      throw new NotFoundError("Practice session", data.sessionId);
-    }
-
-    const word = await this.vocabulary.getById(userId, data.vocabularyItemId);
-    if (!word) {
-      throw new NotFoundError("Vocabulary item", data.vocabularyItemId);
-    }
-
-    const exerciseWord: ExerciseWord = {
-      id: word.id,
-      lemma: word.lemma,
-      translation: word.translation,
-      partOfSpeech: word.partOfSpeech,
-      exampleSentence: word.exampleSentence,
-      forms: word.forms.map((form) => form.form),
+  async snapshot(userId: string, now: Date = new Date()): Promise<PracticeSnapshot> {
+    const [data, profile, bankItems] = await Promise.all([
+      loadPracticeData(this.db, userId),
+      this.profiles.get(userId),
+      this.bank.listForUser(userId),
+    ]);
+    const translationLanguage = profile?.translationLanguage ?? "en";
+    const hashes = new Map(
+      data.words.map((word) => [word.id, wordSourceHash(word, translationLanguage)]),
+    );
+    return {
+      serverTime: now.getTime(),
+      translationLanguage,
+      words: data.words,
+      states: data.states.map((row) => toSnapshotState(row.vocabularyItemId, fromRow(row))),
+      // Stale questions may contradict the edited word, so only fresh ones ship.
+      bank: bankItems.filter((item) => hashes.get(item.vocabularyItemId) === item.sourceHash),
+      topics: data.topics,
     };
-    const type = data.exerciseType;
-    const answer = data.submittedAnswer?.trim() ?? "";
-    const correctAnswer = expectedMeaning(exerciseWord, type);
+  }
 
-    const graded = await this.grade(exerciseWord, type, answer, data);
-    if (graded.status === "uncertain") {
-      return graded;
-    }
-    const { result } = graded;
+  async sync(userId: string, input: SyncInput, now: Date = new Date()): Promise<SyncResult> {
+    const data = syncInputSchema.parse(input);
+    const nowMs = now.getTime();
+    const clamp = (ms: number) => Math.min(Math.max(ms, nowMs - MAX_OFFLINE_AGE_MS), nowMs);
 
-    // Idempotency: a repeated attemptId returns the first outcome unchanged.
-    if (data.attemptId) {
-      const existing = await this.reviews.getAttemptById(userId, data.attemptId);
-      if (existing) {
-        return this.outcomeFor(
-          existing.result as ReviewResult,
-          exerciseWord,
-          type,
-          correctAnswer,
-          word,
-          null,
-          true,
-        );
-      }
-    }
+    const { words, states } = await loadPracticeData(this.db, userId);
+    const wordsById = new Map(words.map((word) => [word.id, word]));
+    const stateById = new Map<string, SchedulingState>(
+      states.map((row) => [row.vocabularyItemId, fromRow(row)]),
+    );
+    const bankIds = data.attempts.flatMap((attempt) => attempt.bankItemId ?? []);
+    const bankById = new Map(
+      (bankIds.length > 0 ? await this.bank.listForWords(userId, [...wordsById.keys()]) : [])
+        .filter((item) => bankIds.includes(item.id))
+        .map((item) => [item.id, item]),
+    );
 
-    const current = await this.reviews.getState(userId, word.id);
-    const base: SchedulingState = current
-      ? {
-          dueAt: current.dueAt,
-          introducedAt: current.introducedAt,
-          successfulRecalls: current.successfulRecalls,
-          consecutiveFailures: current.consecutiveFailures,
-          reviewStage: current.reviewStage,
-          difficulty: current.difficulty,
-          lastResult: current.lastResult as ReviewResult | null,
-          lastReviewedAt: current.lastReviewedAt,
-        }
-      : {
-          dueAt: null,
-          introducedAt: null,
-          successfulRecalls: 0,
-          consecutiveFailures: 0,
-          reviewStage: 0,
-          difficulty: 0.5,
-          lastResult: null,
-          lastReviewedAt: null,
-        };
-    const next = nextSchedulingState(base, result, new Date());
+    const result: SyncResult = { accepted: [], rejected: [], states: [], serverTime: nowMs };
+    const touched = new Set<string>();
 
     await this.db.transaction(async (tx) => {
-      await tx.insert(reviewAttempts).values({
-        ...(data.attemptId ? { id: data.attemptId } : {}),
-        userId,
-        vocabularyItemId: word.id,
-        sessionId: data.sessionId,
-        exerciseType: type,
-        promptSnapshot: JSON.stringify({ exerciseType: type, expectedMeaning: correctAnswer }),
-        submittedAnswer: answer.length > 0 ? answer : null,
-        result,
-        usedHint: data.usedHint,
-        latencyMs: data.latencyMs,
-      });
-      await tx
-        .insert(reviewStates)
-        .values({ userId, vocabularyItemId: word.id, ...next })
-        .onConflictDoUpdate({
-          target: reviewStates.vocabularyItemId,
-          set: { ...next, updatedAt: new Date() },
+      const ownSessions = new Set<string>();
+      for (const session of data.sessions) {
+        const existing = await tx
+          .select({ userId: practiceSessions.userId })
+          .from(practiceSessions)
+          .where(eq(practiceSessions.id, session.id))
+          .limit(1);
+        if (existing[0] && existing[0].userId !== userId) continue;
+        ownSessions.add(session.id);
+        if (!existing[0]) {
+          await tx.insert(practiceSessions).values({
+            id: session.id,
+            userId,
+            startedAt: new Date(clamp(session.startedAt)),
+          });
+        }
+      }
+
+      const attempts = [...data.attempts].sort((a, b) => a.answeredAt - b.answeredAt);
+      const attemptIds = attempts.map((attempt) => attempt.attemptId);
+      const existingAttempts =
+        attemptIds.length > 0
+          ? await tx
+              .select({
+                id: reviewAttempts.id,
+                userId: reviewAttempts.userId,
+                result: reviewAttempts.result,
+              })
+              .from(reviewAttempts)
+              .where(inArray(reviewAttempts.id, attemptIds))
+          : [];
+      const existingById = new Map(existingAttempts.map((row) => [row.id, row]));
+
+      for (const attempt of attempts) {
+        const existing = existingById.get(attempt.attemptId);
+        if (existing) {
+          if (existing.userId !== userId) {
+            result.rejected.push({ attemptId: attempt.attemptId, reason: "id_conflict" });
+          } else {
+            result.accepted.push({
+              attemptId: attempt.attemptId,
+              result: existing.result as ReviewResult,
+              duplicate: true,
+            });
+          }
+          continue;
+        }
+
+        const word = wordsById.get(attempt.vocabularyItemId);
+        if (!word) {
+          result.rejected.push({ attemptId: attempt.attemptId, reason: "word_unavailable" });
+          continue;
+        }
+
+        const bankItem = attempt.bankItemId ? bankById.get(attempt.bankItemId) : undefined;
+        const usableBank =
+          bankItem &&
+          bankItem.vocabularyItemId === word.id &&
+          bankItem.exerciseType === attempt.exerciseType
+            ? bankItem
+            : undefined;
+        const accepted =
+          usableBank?.payload.acceptedAnswers ?? acceptedAnswers(word, attempt.exerciseType);
+        const grade = gradeAnswer(accepted, attempt.submittedAnswer, {
+          usedHint: attempt.usedHint,
+          skipped: attempt.skipped,
         });
+
+        const answeredAt = clamp(attempt.answeredAt);
+        const current = stateById.get(word.id) ?? initialSchedulingState();
+        const next = applyAnswer(current, grade, answeredAt);
+        stateById.set(word.id, next);
+        touched.add(word.id);
+
+        const sessionId =
+          attempt.sessionId && ownSessions.has(attempt.sessionId) ? attempt.sessionId : null;
+        await tx.insert(reviewAttempts).values({
+          id: attempt.attemptId,
+          userId,
+          vocabularyItemId: word.id,
+          sessionId,
+          exerciseType: attempt.exerciseType,
+          promptSnapshot: JSON.stringify({
+            exerciseType: attempt.exerciseType,
+            bankItemId: usableBank?.id ?? null,
+            acceptedAnswers: accepted,
+          }),
+          submittedAnswer: attempt.submittedAnswer?.trim() || null,
+          result: grade,
+          usedHint: attempt.usedHint,
+          latencyMs: attempt.latencyMs ?? null,
+          createdAt: new Date(answeredAt),
+        });
+        result.accepted.push({ attemptId: attempt.attemptId, result: grade, duplicate: false });
+      }
+
+      for (const wordId of touched) {
+        const next = stateById.get(wordId);
+        if (!next) continue;
+        await tx
+          .insert(reviewStates)
+          .values({ userId, vocabularyItemId: wordId, ...next })
+          .onConflictDoUpdate({
+            target: reviewStates.vocabularyItemId,
+            set: { ...next, updatedAt: now },
+          });
+      }
+
+      for (const session of data.sessions) {
+        if (!ownSessions.has(session.id) || session.finishedAt == null) continue;
+        const summary = await summarize(tx, userId, session.id);
+        await tx
+          .update(practiceSessions)
+          .set({
+            status: "completed",
+            finishedAt: new Date(clamp(session.finishedAt)),
+            summary: JSON.stringify(summary),
+          })
+          .where(and(eq(practiceSessions.id, session.id), eq(practiceSessions.userId, userId)));
+      }
     });
 
-    return this.outcomeFor(result, exerciseWord, type, correctAnswer, word, next.dueAt, false);
-  }
-
-  /** Completes a session and returns an aggregate summary of its attempts. */
-  async completeSession(userId: string, sessionId: string): Promise<SessionSummary> {
-    const session = await this.reviews.getSession(userId, sessionId);
-    if (!session) {
-      throw new NotFoundError("Practice session", sessionId);
-    }
-    const summary = await this.summarize(userId, sessionId);
-    if (session.status === "active") {
-      await this.reviews.completeSession(userId, sessionId, summary);
-    }
-    return summary;
-  }
-
-  /** Reads the current session and an aggregate summary without mutating it. */
-  async getSession(
-    userId: string,
-    sessionId: string,
-  ): Promise<{ session: PracticeSession; summary: SessionSummary }> {
-    const session = await this.reviews.getSession(userId, sessionId);
-    if (!session) {
-      throw new NotFoundError("Practice session", sessionId);
-    }
-    return { session, summary: await this.summarize(userId, sessionId) };
-  }
-
-  private async summarize(userId: string, sessionId: string): Promise<SessionSummary> {
-    const attempts = await this.reviews.attemptsForSession(userId, sessionId);
-    const words = new Set<string>();
-    const counts = { recalled: 0, recalled_with_hint: 0, wrong: 0, skipped: 0 };
-    for (const attempt of attempts) {
-      words.add(attempt.vocabularyItemId);
-      counts[attempt.result as ReviewResult] += 1;
-    }
-    return {
-      sessionId,
-      wordsPracticed: words.size,
-      totalAttempts: attempts.length,
-      recalled: counts.recalled,
-      recalledWithHint: counts.recalled_with_hint,
-      wrong: counts.wrong,
-      skipped: counts.skipped,
-    };
-  }
-
-  private async grade(
-    word: ExerciseWord,
-    type: ExerciseType,
-    answer: string,
-    data: z.infer<typeof submitAttemptSchema>,
-  ): Promise<
-    { status: "graded"; result: ReviewResult } | { status: "uncertain"; feedback: string }
-  > {
-    if (data.skipped) {
-      return { status: "graded", result: "skipped" };
-    }
-    if (gradeObjective(word, type, answer)) {
-      return { status: "graded", result: data.usedHint ? "recalled_with_hint" : "recalled" };
-    }
-
-    // Open-ended recall/cloze may accept synonyms the deterministic check misses.
-    // Multiple choice is fully objective and never consults the AI.
-    if (this.provider && answer.length > 0 && (type === "recall" || type === "cloze")) {
-      const evaluation = await this.provider.evaluateAnswer({
-        expectedMeaning: expectedMeaning(word, type),
-        acceptedAnswers: acceptedAnswers(word, type),
-        userAnswer: answer,
-      });
-      switch (evaluation.result) {
-        case "correct":
-          return { status: "graded", result: data.usedHint ? "recalled_with_hint" : "recalled" };
-        case "partially_correct":
-          return { status: "graded", result: "recalled_with_hint" };
-        case "incorrect":
-          return { status: "graded", result: "wrong" };
-        case "uncertain":
-          return { status: "uncertain", feedback: evaluation.feedback };
-      }
-    }
-
-    return { status: "graded", result: "wrong" };
-  }
-
-  private outcomeFor(
-    result: ReviewResult,
-    _word: ExerciseWord,
-    _type: ExerciseType,
-    correctAnswer: string,
-    full: { exampleSentence: string | null; exampleTranslation: string | null },
-    nextDueAt: Date | null,
-    duplicate: boolean,
-  ): AttemptOutcome {
-    const correct = result === "recalled" || result === "recalled_with_hint";
-    const feedback = feedbackFor(result, correctAnswer);
-    const reinforcement: Reinforcement | null = correct
-      ? null
-      : {
-          correctAnswer,
-          exampleSentence: full.exampleSentence,
-          exampleTranslation: full.exampleTranslation,
-        };
-    return {
-      status: "graded",
-      result,
-      correct,
-      feedback,
-      correctAnswer,
-      reinforcement,
-      nextDueAt: nextDueAt ? nextDueAt.toISOString() : null,
-      duplicate,
-    };
-  }
-
-  private pickDistractors(correct: string, pool: string[]): string[] {
-    const correctKey = normalizeAnswer(correct);
-    const seen = new Set<string>([correctKey]);
-    const picked: string[] = [];
-    for (const candidate of pool) {
-      const key = normalizeAnswer(candidate);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      picked.push(candidate);
-      if (picked.length >= MAX_DISTRACTORS) break;
-    }
-    return picked;
-  }
-
-  private async formsFor(ids: string[]): Promise<Map<string, string[]>> {
-    const map = new Map<string, string[]>();
-    if (ids.length === 0) return map;
-    const rows = await this.db
-      .select({ itemId: vocabularyForms.vocabularyItemId, form: vocabularyForms.form })
-      .from(vocabularyForms)
-      .where(inArray(vocabularyForms.vocabularyItemId, ids));
-    for (const row of rows) {
-      const list = map.get(row.itemId) ?? [];
-      list.push(row.form);
-      map.set(row.itemId, list);
-    }
-    return map;
+    result.states = [...touched].flatMap((id) => {
+      const state = stateById.get(id);
+      return state ? [toSnapshotState(id, state)] : [];
+    });
+    return result;
   }
 }
 
-function feedbackFor(result: ReviewResult, correctAnswer: string): string {
-  switch (result) {
-    case "recalled":
-      return "Correct.";
-    case "recalled_with_hint":
-      return "Correct, with a hint. Keep practicing for independent recall.";
-    case "wrong":
-      return `Not quite. The answer is "${correctAnswer}".`;
-    case "skipped":
-      return `Skipped. The answer is "${correctAnswer}".`;
-  }
+async function summarize(executor: Pick<Database, "select">, userId: string, sessionId: string) {
+  const rows = await executor
+    .select({ vocabularyItemId: reviewAttempts.vocabularyItemId, result: reviewAttempts.result })
+    .from(reviewAttempts)
+    .where(and(eq(reviewAttempts.userId, userId), eq(reviewAttempts.sessionId, sessionId)))
+    .orderBy(asc(reviewAttempts.createdAt), asc(sql`rowid`));
+  const counts = { recalled: 0, recalled_with_hint: 0, wrong: 0, skipped: 0 };
+  for (const row of rows) counts[row.result as ReviewResult] += 1;
+  return {
+    sessionId,
+    wordsPracticed: new Set(rows.map((row) => row.vocabularyItemId)).size,
+    totalAttempts: rows.length,
+    recalled: counts.recalled,
+    recalledWithHint: counts.recalled_with_hint,
+    wrong: counts.wrong,
+    skipped: counts.skipped,
+  };
+}
+
+function fromRow(row: ReviewStateRow): SchedulingState {
+  return {
+    dueAt: row.dueAt,
+    introducedAt: row.introducedAt,
+    successfulRecalls: row.successfulRecalls,
+    consecutiveFailures: row.consecutiveFailures,
+    reviewStage: row.reviewStage,
+    difficulty: row.difficulty,
+    lastResult: row.lastResult as ReviewResult | null,
+    lastReviewedAt: row.lastReviewedAt,
+  };
 }

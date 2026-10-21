@@ -40,6 +40,7 @@ const formInputSchema = z.object({
 export const createVocabularySchema = z.object({
   lemma: z.string().min(1),
   translation: z.string().min(1),
+  secondaryTranslation: z.string().optional(),
   partOfSpeech: z.enum(partsOfSpeech),
   definition: z.string().optional(),
   gender: z.enum(genders).optional(),
@@ -63,6 +64,7 @@ export type CreateVocabularyInput = z.input<typeof createVocabularySchema>;
 export const updateVocabularySchema = z.object({
   lemma: z.string().min(1).optional(),
   translation: z.string().min(1).optional(),
+  secondaryTranslation: z.string().nullable().optional(),
   partOfSpeech: z.enum(partsOfSpeech).optional(),
   definition: z.string().nullable().optional(),
   gender: z.enum(genders).nullable().optional(),
@@ -140,6 +142,7 @@ export class VocabularyRepository {
         userId,
         lemma: data.lemma,
         translation: data.translation,
+        secondaryTranslation: data.secondaryTranslation,
         partOfSpeech: data.partOfSpeech,
         definition: data.definition,
         gender: data.gender,

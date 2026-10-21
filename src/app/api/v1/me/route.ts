@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ok, withAuth } from "@/lib/api/respond";
 import { getDb } from "@/server/db/connection";
+import { translationLanguages } from "@/server/db/schema";
 import { ProfilesRepository } from "@/server/repositories/profiles";
 import type { AuthSession } from "@/server/auth/types";
 
@@ -17,6 +18,7 @@ import type { AuthSession } from "@/server/auth/types";
 function serialize(profile: {
   id: string;
   preferredLocale: string;
+  translationLanguage: string;
   timezone: string | null;
   onboardingCompletedAt: Date | null;
   createdAt: Date;
@@ -25,6 +27,7 @@ function serialize(profile: {
   return {
     id: profile.id,
     preferredLocale: profile.preferredLocale,
+    translationLanguage: profile.translationLanguage,
     timezone: profile.timezone,
     onboardingCompletedAt: profile.onboardingCompletedAt?.toISOString() ?? null,
     createdAt: profile.createdAt.toISOString(),
@@ -40,6 +43,7 @@ export const GET = withAuth(async (_request: Request, session: AuthSession) => {
 
 const patchSchema = z.object({
   preferredLocale: z.string().min(2).max(10).optional(),
+  translationLanguage: z.enum(translationLanguages).optional(),
   timezone: z.string().min(1).max(64).nullish(),
   onboardingCompleted: z.boolean().optional(),
 });
@@ -52,6 +56,7 @@ export const PATCH = withAuth(async (request: Request, session: AuthSession) => 
   await repo.ensure(session);
   const profile = await repo.update(session.userId, {
     preferredLocale: input.preferredLocale,
+    translationLanguage: input.translationLanguage,
     timezone: input.timezone,
     onboardingCompletedAt:
       input.onboardingCompleted === undefined

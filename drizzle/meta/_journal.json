@@ -8,6 +8,13 @@
       "when": 1792247767585,
       "tag": "0000_sweet_roulette",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792591626248,
+      "tag": "0001_wide_quicksilver",
+      "breakpoints": true
     }
   ]
 }

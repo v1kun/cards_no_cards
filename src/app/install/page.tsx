@@ -1,12 +1,9 @@
-import Link from "next/link";
+import { PageHeader } from "@/components/ui";
 
 export default function InstallPage() {
   return (
     <main>
-      <div className="row">
-        <h1>Install on your iPhone</h1>
-        <Link href="/">Home</Link>
-      </div>
+      <PageHeader title="Install on your iPhone" back={{ href: "/", label: "Home" }} />
 
       <section className="card stack">
         <p>
@@ -28,7 +25,9 @@ export default function InstallPage() {
         </ol>
         <p className="muted">
           Installing adds an icon and full-screen launch. Your vocabulary and review history live on
-          the server and sync when you are online; nothing private is stored offline by default.
+          the server. Practice also works offline: open Practice once while online and the app keeps
+          a copy of your words and prepared questions on this device. Answers given offline are
+          saved locally and sync automatically when you are back online.
         </p>
       </section>
     </main>

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
 
+import { PageHeader } from "@/components/ui";
+
 const placeholderStyle: CSSProperties = {
   border: "1px dashed #3a3a46",
   borderRadius: "8px",
@@ -26,10 +28,7 @@ function Shot({ label }: { label: string }) {
 export default function ShortcutsPage() {
   return (
     <main>
-      <div className="row">
-        <h1>Voice capture with Siri Shortcuts</h1>
-        <Link href="/">Home</Link>
-      </div>
+      <PageHeader title="Voice capture with Siri Shortcuts" back={{ href: "/", label: "Home" }} />
 
       <section className="card stack">
         <p>

@@ -100,6 +100,7 @@ containers, on next start).
 | `npm run test:watch`   | Run Vitest in watch mode                  |
 | `npm run db:generate`  | Generate SQL migrations from the schema   |
 | `npm run db:migrate`   | Apply migrations to `DATABASE_URL`        |
+| `npm run deck:seed`    | Load the A1 starter deck (see below)      |
 
 ## Database
 
@@ -182,6 +183,24 @@ The UI is backed by versioned JSON endpoints (all under `/api/v1`, all using the
 Topic names are normalized (case/whitespace) so duplicates collapse, and
 inflected forms stay attached to their lemma instead of becoming separate words.
 
+### Starter deck (Spanish A1)
+
+`data/starter-decks/es-a1/` holds about 1000 common A1 words as TSV files, one
+per topic (`# topic: <name>` header, then `lemma · part of speech · gender ·
+translation · example · example translation`). Nouns include their article and
+every example contains the lemma, so cloze exercises work out of the box.
+Translations are Russian.
+
+```bash
+npm run deck:seed                 # load es-a1 into the dev user's vocabulary
+npm run deck:seed -- <userId>     # load it for another user
+```
+
+Words the user already has (case-insensitive lemma match) are skipped, so the
+command is safe to re-run. New words get a topic, a `starter_deck` source, and
+a fresh review state; press **Generate questions** on the Practice page to
+build their exercise bank.
+
 ## Import from free text
 
 Paste lesson notes or a word list at [`/import`](http://localhost:3000/import).
@@ -207,13 +226,39 @@ but the raw text is preserved so it can be reprocessed.
 
 ## Practice and review
 
-Run a short session at [`/practice`](http://localhost:3000/practice). Each
-session mixes words whose scheduled review is **due** with up to five **new**
-words, targeting roughly three minutes — due reviews are always prioritized over
-introducing too much new material, and there is no enforced timer. Exercises are
-served one at a time: multiple choice for new words, recall from the translation
-once a word is known, and cloze (fill-in-the-blank) for well-known words that
-have an example sentence.
+Practice lives at [`/practice`](http://localhost:3000/practice). Pick a
+**section** — all words, a category (topic) or a part of speech — and run a
+short session. Each session mixes words whose scheduled review is **due** with
+up to five **new** words; due reviews are always prioritized. Exercises are
+served one at a time: multiple choice for new words, recall from the
+translation once a word is known, and cloze (fill-in-the-blank) for well-known
+words. Typed answers offer a hint (first letter and length); a hint-assisted
+answer is recorded as such.
+
+### Prepared questions (exercise bank)
+
+Questions are **generated ahead of time by AI** and stored per word (a few
+variants per exercise type), so practice itself needs no AI calls and no
+network. The bank is refreshed **only on demand**: the Practice page shows how
+many words have no questions yet and a **Generate questions** button that
+processes words in batches of 10. Editing a word marks its questions stale; a
+single word can be regenerated from its page. Words without prepared questions
+still get a simple built-in multiple-choice question.
+
+### Offline practice and sync
+
+Opening Practice while online saves an **offline snapshot** (words, review
+states and prepared questions) in the browser's IndexedDB. From then on
+sessions are planned, served and graded on the device, so practice works with
+no connection. Answers go to a local outbox and are sent to
+`POST /review/sync` in the background — immediately when online, otherwise as
+soon as the connection returns. The server re-grades and re-schedules every
+attempt itself; the device only predicts the next review locally until the
+sync confirms it. Sync is idempotent (client-generated `attemptId`).
+
+Limitation: this is single-user, single-device-at-a-time friendly. If you
+practice offline on two devices, both sets of answers are kept, but scheduling
+is applied in the order the server receives them (no merge logic beyond that).
 
 Scheduling is deterministic and lives in `src/domain/review/` (the AI model
 never chooses review dates). Intervals follow a fixed ladder (1, 3, 7, 14, 30
@@ -226,18 +271,22 @@ days):
   review; a single correct answer never permanently "masters" a word.
 - A skip is recorded distinctly and counts as neither success nor failure.
 
-Objective exercises are graded deterministically (accent/case/punctuation
-lenient). Open-ended recall may consult the AI adapter for synonyms; an
-`uncertain` evaluation never auto-punishes the learner — it asks them to retry
-and records nothing. Attempt history is append-only and attempt submission is
-idempotent via a client-supplied `attemptId`.
+Grading is deterministic (accent/case/punctuation lenient) and identical on the
+device and the server. Attempt history is append-only.
 
 | Method & path | Purpose |
 | --- | --- |
-| `POST /review/session` | Start a session; returns ordered exercises with no answers revealed |
-| `POST /review/attempts` | Grade one answer, persist it, and update scheduling (idempotent) |
-| `GET /review/session/:id` | Session status and a running summary |
-| `PATCH /review/session/:id` | Complete the session and return its summary |
+| `GET /offline/snapshot` | Everything needed to practice offline (words, states, prepared questions) |
+| `POST /review/sync` | Upload queued attempts/sessions; returns authoritative review states |
+| `GET /exercise-bank/status` | How many words have prepared questions, are missing or stale |
+| `POST /exercise-bank/refresh` | Generate questions for the next batch of words (optional `exclude`) |
+| `POST /vocabulary/:id/exercises/regenerate` | Regenerate one word's questions |
+
+### Settings
+
+[`/settings`](http://localhost:3000/settings) selects the **translation
+language** (English or Russian) used for new words, generated questions and
+section names. Existing words keep their translations.
 
 ## Progressive Web App (install on iPhone)
 
@@ -249,13 +298,16 @@ full-screen.
 - **Icons** (`public/icons/`): 192/512 standard plus a maskable 512 (safe-zone
   padded) and a 180px apple-touch icon.
 - **Service worker** (`public/sw.js`): registered in production only
-  (`src/components/ServiceWorkerRegister.tsx`). It caches **only** same-origin
-  static assets (`/_next/static/`, `/icons/`, the manifest). It never caches
-  page navigations or any `/api/` response, so authenticated data and private
-  vocabulary are never stored offline.
-- **Offline banner** (`src/components/OfflineBanner.tsx`): a status banner
-  appears when the browser goes offline; the API client surfaces network
-  failures as clear errors so a failed save is never silent.
+  (`src/components/ServiceWorkerRegister.tsx`). It caches same-origin static
+  assets (`/_next/static/`, `/icons/`, the manifest) and the HTML shells of the
+  offline-capable pages (`/`, `/practice`, `/practice/session`, network-first).
+  Those pages are client-rendered and contain no vocabulary. It never caches
+  `/api/` responses; offline practice data lives in IndexedDB (see
+  [Offline practice and sync](#offline-practice-and-sync)). Other pages show a
+  small "You are offline" page when there is no connection.
+- **Offline banner** (`src/components/OfflineBanner.tsx`): shown while
+  offline; practice keeps working, while editing and imports need the
+  connection and surface clear errors so a failed save is never silent.
 - **Install steps**: open the site in Safari, tap **Share → Add to Home
   Screen**. The in-app guide lives at `/install`.
 
@@ -341,7 +393,7 @@ src/
   components/       Client components (offline banner, SW registration)
 drizzle/            Generated SQL migrations
 public/
-  sw.js             Service worker (static assets only; never caches API)
+  sw.js             Service worker (static assets + offline page shells; never caches API)
   icons/            PWA icons (standard, maskable, apple-touch)
 tests/
   unit/             Unit tests

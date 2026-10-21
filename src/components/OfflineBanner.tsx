@@ -5,9 +5,8 @@ import { useEffect, useState } from "react";
 /**
  * A fixed banner shown while the browser reports no network connection.
  *
- * This gives the whole app a clear, consistent signal that saves and syncs
- * will fail, complementing the per-request network errors surfaced by the API
- * client.
+ * Practice keeps working from the saved copy and answers sync later; other
+ * pages (editing, imports, question generation) need the connection.
  */
 export function OfflineBanner() {
   const [offline, setOffline] = useState(false);
@@ -27,7 +26,7 @@ export function OfflineBanner() {
 
   return (
     <div className="offline-banner" role="status" aria-live="polite">
-      You are offline. Changes can’t be saved until the connection returns.
+      Offline — practice still works and answers will sync later.
     </div>
   );
 }

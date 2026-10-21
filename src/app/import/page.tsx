@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { PageHeader } from "@/components/ui";
 import { ApiClientError } from "@/lib/client/api";
 import {
   confirmImport,
@@ -106,10 +107,7 @@ export default function ImportPage() {
 
   return (
     <main>
-      <div className="row">
-        <h1>Import vocabulary</h1>
-        <Link href="/vocabulary">Back to vocabulary</Link>
-      </div>
+      <PageHeader title="Import vocabulary" back={{ href: "/vocabulary", label: "Vocabulary" }} />
 
       {result ? (
         <section className="card">

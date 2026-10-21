@@ -1,305 +1,250 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { PageHeader, SectionTile, SegmentedControl, Spinner } from "@/components/ui";
+import type { SectionFilter } from "@/domain/review/session-plan";
 import { ApiClientError } from "@/lib/client/api";
 import {
-  completeReviewSession,
-  startReviewSession,
-  submitAttempt,
-  type ExercisePromptDto,
-  type GradedOutcomeDto,
-  type PracticeSessionDto,
-  type SessionSummaryDto,
+  allWordsLabel,
+  labelLanguage,
+  partOfSpeechEmoji,
+  partOfSpeechLabel,
+  sectionQuery,
+  topicEmoji,
+  uncategorizedLabel,
+} from "@/lib/client/labels";
+import {
+  getBankStatus,
+  getPracticeEngine,
+  refreshBank,
+  type BankStatus,
 } from "@/lib/client/practice";
+import { usePracticeData } from "@/lib/client/use-practice";
 
-type Phase = "idle" | "loading" | "active" | "empty" | "summary";
+type Grouping = "topics" | "pos";
 
-function errorMessage(error: unknown): string {
-  return error instanceof ApiClientError ? error.message : "Something went wrong.";
-}
+const GROUPING_KEY = "cnc.practice.grouping";
 
-const INSTRUCTION_HINT = "Need a nudge? Reveal a hint — it counts as an assisted recall.";
-
-export default function PracticePage() {
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [session, setSession] = useState<PracticeSessionDto | null>(null);
-  const [exercises, setExercises] = useState<ExercisePromptDto[]>([]);
-  const [index, setIndex] = useState(0);
-  const [answer, setAnswer] = useState("");
-  const [usedHint, setUsedHint] = useState(false);
-  const [outcome, setOutcome] = useState<GradedOutcomeDto | null>(null);
-  const [summary, setSummary] = useState<SessionSummaryDto | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+function BankPanel({ onUpdated }: { onUpdated: () => Promise<void> }) {
+  const [status, setStatus] = useState<BankStatus | null>(null);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [failed, setFailed] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const current = exercises[index];
-  const attemptId = useMemo(
-    () => (session && current ? `${session.id}:${index}` : null),
-    [session, current, index],
-  );
+  const loadStatus = useCallback(async () => {
+    try {
+      setStatus(await getBankStatus());
+    } catch {
+      setStatus(null);
+    }
+  }, []);
 
-  const start = useCallback(async () => {
-    setPhase("loading");
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
+
+  const generate = useCallback(async () => {
+    if (!status) return;
+    setRunning(true);
     setError(null);
+    setFailed([]);
+    const exclude: string[] = [];
+    const failedLemmas: string[] = [];
+    let done = 0;
+    const total = status.pending;
+    setProgress({ done, total });
     try {
-      const plan = await startReviewSession();
-      if (!plan.session || plan.exercises.length === 0) {
-        setPhase("empty");
-        return;
-      }
-      setSession(plan.session);
-      setExercises(plan.exercises);
-      setIndex(0);
-      setAnswer("");
-      setUsedHint(false);
-      setOutcome(null);
-      setSummary(null);
-      setPhase("active");
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setPhase("idle");
-    }
-  }, []);
-
-  const finish = useCallback(async (activeSession: PracticeSessionDto) => {
-    try {
-      const completed = await completeReviewSession(activeSession.id);
-      setSummary(completed.summary);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setPhase("summary");
-    }
-  }, []);
-
-  const grade = useCallback(
-    async (options: { skipped?: boolean; answerOverride?: string }) => {
-      if (!session || !current) return;
-      setSubmitting(true);
-      setError(null);
-      try {
-        const result = await submitAttempt({
-          sessionId: session.id,
-          vocabularyItemId: current.vocabularyItemId,
-          exerciseType: current.exerciseType,
-          submittedAnswer: options.skipped ? undefined : (options.answerOverride ?? answer),
-          usedHint,
-          skipped: options.skipped ?? false,
-          attemptId: attemptId ?? undefined,
-        });
-        if (result.status === "uncertain") {
-          // Uncertain evaluations do not punish; prompt the learner to retry.
-          setError(`${result.feedback} Try rephrasing your answer.`);
-          return;
+      for (;;) {
+        const result = await refreshBank(exclude);
+        done += result.succeeded;
+        for (const word of result.failed) {
+          exclude.push(word.id);
+          failedLemmas.push(word.lemma);
         }
-        setOutcome(result);
-      } catch (caught) {
-        setError(errorMessage(caught));
-      } finally {
-        setSubmitting(false);
+        setProgress({ done, total });
+        setFailed([...failedLemmas]);
+        if (result.remaining === 0 || result.processed === 0) break;
+        if (result.succeeded === 0 && result.failed.length === 0) break;
       }
-    },
-    [session, current, answer, usedHint, attemptId],
+      await onUpdated();
+    } catch (caught) {
+      setError(
+        caught instanceof ApiClientError && caught.status === 0
+          ? "You are offline. Question generation needs a connection."
+          : caught instanceof Error
+            ? caught.message
+            : "Generation failed.",
+      );
+    } finally {
+      setRunning(false);
+      setProgress(null);
+      await loadStatus();
+    }
+  }, [status, onUpdated, loadStatus]);
+
+  if (!status || status.totalWords === 0) return null;
+
+  const fresh = status.pending === 0;
+  return (
+    <section className="card stack" aria-labelledby="bank-title">
+      <div className="spread">
+        <div className="stack" style={{ gap: "0.15rem" }}>
+          <h2 id="bank-title">Question bank</h2>
+          <p className="muted small">
+            {fresh
+              ? `Prepared questions for all ${status.totalWords} words — practice works offline.`
+              : `${status.upToDate} of ${status.totalWords} words have prepared questions` +
+                (status.stale ? ` (${status.stale} need an update after edits)` : "") +
+                ". Others use simple built-in questions."}
+          </p>
+        </div>
+        {fresh ? <span className="badge success">Up to date</span> : null}
+      </div>
+      {!fresh ? (
+        <button type="button" className="secondary" onClick={generate} disabled={running}>
+          {running ? <Spinner /> : <span aria-hidden="true">✨</span>}
+          {running && progress
+            ? `Generating… ${progress.done} / ${progress.total}`
+            : `Generate questions for ${status.pending} word${status.pending === 1 ? "" : "s"}`}
+        </button>
+      ) : null}
+      {failed.length > 0 ? (
+        <p className="muted small">Could not generate for: {failed.join(", ")}. Try again later.</p>
+      ) : null}
+      {error ? <p className="error small">{error}</p> : null}
+    </section>
+  );
+}
+
+export default function PracticePage() {
+  const router = useRouter();
+  const { snapshot, loading, refreshing, pending, networkError, reload } = usePracticeData();
+  const [grouping, setGrouping] = useState<Grouping>("topics");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(GROUPING_KEY);
+    if (saved === "topics" || saved === "pos") setGrouping(saved);
+  }, []);
+
+  const changeGrouping = (value: Grouping) => {
+    setGrouping(value);
+    window.localStorage.setItem(GROUPING_KEY, value);
+  };
+
+  const lang = labelLanguage(snapshot?.translationLanguage);
+  const sections = useMemo(
+    () => (snapshot ? getPracticeEngine().sections(snapshot, uncategorizedLabel(lang)) : null),
+    [snapshot, lang],
   );
 
-  const next = useCallback(() => {
-    setOutcome(null);
-    setAnswer("");
-    setUsedHint(false);
-    setError(null);
-    if (index + 1 >= exercises.length) {
-      if (session) void finish(session);
-      return;
-    }
-    setIndex((value) => value + 1);
-  }, [index, exercises.length, session, finish]);
-
-  if (phase === "idle" || phase === "loading") {
-    return (
-      <main>
-        <div className="row">
-          <h1>Practice</h1>
-          <Link href="/">Home</Link>
-        </div>
-        <section className="card stack">
-          <p>
-            A short session mixes words that are due for review with a few new ones, targeting about
-            three minutes. There is no timer.
-          </p>
-          <button type="button" className="button" onClick={start} disabled={phase === "loading"}>
-            {phase === "loading" ? "Preparing…" : "Start session"}
-          </button>
-          {error ? <p className="error-box">{error}</p> : null}
-        </section>
-      </main>
-    );
-  }
-
-  if (phase === "empty") {
-    return (
-      <main>
-        <div className="row">
-          <h1>Practice</h1>
-          <Link href="/">Home</Link>
-        </div>
-        <section className="card stack">
-          <p>Nothing is due right now, and there are no new words to introduce.</p>
-          <p className="muted">
-            Add words from <Link href="/vocabulary">your vocabulary</Link> or{" "}
-            <Link href="/import">import</Link> a list, then come back to practice.
-          </p>
-          <button type="button" onClick={start}>
-            Check again
-          </button>
-        </section>
-      </main>
-    );
-  }
-
-  if (phase === "summary" && summary) {
-    return (
-      <main>
-        <div className="row">
-          <h1>Session complete</h1>
-          <Link href="/">Home</Link>
-        </div>
-        <section className="card stack">
-          <p>
-            You practiced {summary.wordsPracticed} word(s) across {summary.totalAttempts} answer(s).
-          </p>
-          <ul className="list">
-            <li className="list-item">Independent recalls: {summary.recalled}</li>
-            <li className="list-item">Hint-assisted: {summary.recalledWithHint}</li>
-            <li className="list-item">Incorrect: {summary.wrong}</li>
-            <li className="list-item">Skipped: {summary.skipped}</li>
-          </ul>
-          <div className="row">
-            <button type="button" className="button" onClick={start}>
-              Practice again
-            </button>
-            <Link href="/vocabulary">Back to vocabulary</Link>
-          </div>
-          {error ? <p className="error-box">{error}</p> : null}
-        </section>
-      </main>
-    );
-  }
-
-  if (!current) {
-    return null;
-  }
-
-  const progress = `${index + 1} / ${exercises.length}`;
+  const open = (filter: SectionFilter) => router.push(`/practice/session${sectionQuery(filter)}`);
 
   return (
     <main>
-      <div className="row">
-        <h1>Practice</h1>
-        <span className="muted">{progress}</span>
-      </div>
+      <PageHeader title="Practice" back={{ href: "/", label: "Home" }}>
+        {refreshing ? (
+          <span className="muted small row center" style={{ gap: "0.4rem" }}>
+            <Spinner /> Updating
+          </span>
+        ) : null}
+      </PageHeader>
 
-      <section className="card stack">
-        <div className="row">
-          <span className="tag ghost">{current.exerciseType.replace("_", " ")}</span>
-          {current.isNew ? <span className="tag warn">new word</span> : null}
-        </div>
-        <p className="muted">{current.instruction}</p>
-        <h2>{current.promptText}</h2>
+      {pending > 0 ? (
+        <p className="notice warn small" role="status">
+          {pending} answer{pending === 1 ? "" : "s"} waiting to sync. They will upload automatically
+          when you are online.
+        </p>
+      ) : null}
+      {networkError && snapshot ? <p className="muted small">{networkError}</p> : null}
 
-        {outcome ? (
-          <div className="stack">
-            <p className={outcome.correct ? "tag" : "error-box"}>{outcome.feedback}</p>
-            {outcome.reinforcement && !outcome.correct ? (
-              <div className="card stack">
-                <strong>Reinforcement</strong>
-                <p>Correct answer: {outcome.reinforcement.correctAnswer}</p>
-                {outcome.reinforcement.exampleSentence ? (
-                  <p className="muted">
-                    {outcome.reinforcement.exampleSentence}
-                    {outcome.reinforcement.exampleTranslation
-                      ? ` — ${outcome.reinforcement.exampleTranslation}`
-                      : ""}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-            <button type="button" className="button" onClick={next}>
-              {index + 1 >= exercises.length ? "Finish session" : "Next"}
-            </button>
+      {loading ? (
+        <p className="muted row center">
+          <Spinner /> Loading…
+        </p>
+      ) : !snapshot || !sections ? (
+        <section className="card empty-state">
+          <span className="emoji" aria-hidden="true">
+            📶
+          </span>
+          <h2>No saved practice data yet</h2>
+          <p className="muted">
+            Open this page once while online to download your words. After that, practice works
+            offline.
+          </p>
+          {networkError ? <p className="error small">{networkError}</p> : null}
+          <button type="button" onClick={() => void reload()} disabled={refreshing}>
+            {refreshing ? <Spinner /> : null} Try again
+          </button>
+        </section>
+      ) : sections.all.total === 0 ? (
+        <section className="card empty-state">
+          <span className="emoji" aria-hidden="true">
+            🌱
+          </span>
+          <h2>Your vocabulary is empty</h2>
+          <p className="muted">Add a few words or import a lesson to start practicing.</p>
+          <div className="row center">
+            <Link className="button" href="/vocabulary">
+              Add words
+            </Link>
+            <Link className="button secondary" href="/import">
+              Import a lesson
+            </Link>
           </div>
-        ) : current.exerciseType === "multiple_choice" && current.options ? (
-          <div className="stack">
-            {usedHint ? <p className="muted">{INSTRUCTION_HINT}</p> : null}
-            {current.options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                className="secondary"
-                disabled={submitting}
-                onClick={() => {
-                  setAnswer(option);
-                  void grade({ skipped: false, answerOverride: option });
-                }}
-              >
-                {option}
-              </button>
-            ))}
-            <div className="row">
-              <button
-                type="button"
-                onClick={() => void grade({ skipped: true })}
-                disabled={submitting}
-              >
-                Skip
-              </button>
-            </div>
-          </div>
-        ) : (
-          <form
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void grade({ skipped: false });
-            }}
-          >
-            <input
-              type="text"
-              value={answer}
-              autoComplete="off"
-              placeholder="Type your answer"
-              onChange={(event) => setAnswer(event.target.value)}
-            />
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={usedHint}
-                onChange={(event) => setUsedHint(event.target.checked)}
+        </section>
+      ) : (
+        <div className="stack-lg">
+          <SectionTile
+            featured
+            emoji="🎯"
+            title={allWordsLabel(lang)}
+            counts={sections.all}
+            onClick={() => open({ kind: "all" })}
+          />
+
+          <section className="stack" aria-label="Sections">
+            <div className="spread">
+              <span className="eyebrow">Choose a section</span>
+              <SegmentedControl<Grouping>
+                label="Group sections by"
+                value={grouping}
+                onChange={changeGrouping}
+                options={[
+                  { value: "topics", label: "Categories" },
+                  { value: "pos", label: "Parts of speech" },
+                ]}
               />
-              <span>I used a hint</span>
-            </label>
-            <div className="row">
-              <button
-                type="submit"
-                className="button"
-                disabled={submitting || answer.trim().length === 0}
-              >
-                {submitting ? "Checking…" : "Submit"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void grade({ skipped: true })}
-                disabled={submitting}
-              >
-                Skip
-              </button>
             </div>
-          </form>
-        )}
+            <div className="grid">
+              {grouping === "topics"
+                ? sections.topics.map((topic) => (
+                    <SectionTile
+                      key={topic.topicId ?? "none"}
+                      emoji={topicEmoji(topic.name, topic.topicId === null)}
+                      title={topic.name}
+                      counts={topic.counts}
+                      onClick={() => open({ kind: "topic", topicId: topic.topicId })}
+                    />
+                  ))
+                : sections.partsOfSpeech.map((section) => (
+                    <SectionTile
+                      key={section.partOfSpeech}
+                      emoji={partOfSpeechEmoji(section.partOfSpeech)}
+                      title={partOfSpeechLabel(section.partOfSpeech, lang)}
+                      counts={section.counts}
+                      onClick={() => open({ kind: "pos", partOfSpeech: section.partOfSpeech })}
+                    />
+                  ))}
+            </div>
+          </section>
 
-        {error ? <p className="error-box">{error}</p> : null}
-      </section>
+          <BankPanel onUpdated={reload} />
+        </div>
+      )}
     </main>
   );
 }

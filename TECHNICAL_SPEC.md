@@ -36,7 +36,9 @@ only\
 -   Native iOS application.
 -   Deep native Siri/App Intents integration.
 -   OCR from images or screenshots.
--   Offline-first editing with complex conflict resolution.
+-   Offline-first editing with complex conflict resolution. (Offline
+    *practice* is supported: answers are queued on the device and synced;
+    editing still requires a connection.)
 -   Social features, payments, public subscriptions, or multi-language
     learning UI.
 -   Training a custom language model.
@@ -137,8 +139,10 @@ src/
         imports/[id]/confirm/route.ts
         vocabulary/route.ts
         vocabulary/[id]/route.ts
-        review/session/route.ts
-        review/attempts/route.ts
+        offline/snapshot/route.ts
+        review/sync/route.ts
+        exercise-bank/status/route.ts
+        exercise-bank/refresh/route.ts
         topics/route.ts
         account/route.ts
   components/
@@ -694,24 +698,31 @@ List the current user's topics.
 
 Create a topic, normalizing whitespace and case for duplicate detection.
 
-#### `POST /api/v1/review/session`
+> Updated: practice runs on the device from an offline snapshot; the
+> earlier server-driven session/attempt endpoints were replaced by the
+> endpoints below.
 
-Create or resume a session. Select due words and a bounded number of new
-words. Return the next exercise prompt without revealing its expected
-answer in client-visible data.
+#### `GET /api/v1/offline/snapshot`
 
-#### `POST /api/v1/review/attempts`
+Return everything needed to practice offline for the current user: active
+words with topics, their review states, and prepared (AI-generated) exercise
+variants with expected answers. The client stores it in IndexedDB and plans,
+serves and grades sessions locally.
 
-Submit an answer. Validate the session and word association, evaluate
-the response, append a review attempt, update review state, and return
-feedback plus the next action.
+#### `POST /api/v1/review/sync`
 
-Use an idempotency key or unique client-generated attempt ID to prevent
-duplicate submissions after retries.
+Upload queued attempts and sessions. Each attempt carries a unique
+client-generated attempt ID (idempotent). The server validates ownership,
+re-grades and re-schedules every attempt deterministically, records
+sessions (completing them with a summary derived from stored attempts), and
+returns the authoritative review states.
 
-#### `POST /api/v1/review/session/:id/finish`
+#### `GET /api/v1/exercise-bank/status` and `POST /api/v1/exercise-bank/refresh`
 
-Finish the session and return a summary derived from stored attempts.
+Report how many words have prepared exercises, are missing them, or are
+stale; generate exercises for the next batch of words on explicit user
+request only. A per-word regenerate endpoint exists at
+`POST /api/v1/vocabulary/:id/exercises/regenerate`.
 
 #### `GET /api/v1/account`
 
@@ -805,7 +816,8 @@ only.
 -   Avoid relying on hover-only interactions.
 -   Cache static assets cautiously.
 -   Do not cache authenticated API responses or private vocabulary by
-    default in the service worker.
+    default in the service worker. (Offline practice data is stored by the
+    app in IndexedDB, not in the service-worker cache.)
 -   Show a clear network or synchronization error when the server is
     unavailable.
 -   Test the actual install and sign-in flows on an iPhone, not only in

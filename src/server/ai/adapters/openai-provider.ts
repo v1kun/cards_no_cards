@@ -5,11 +5,14 @@ import { RateLimiter, withRetry, withTimeout } from "../resilience";
 import {
   answerEvaluationSchema,
   generatedExampleSchema,
+  generatedExerciseSchema,
   parsedVocabularyProposalSchema,
   type AIProvider,
   type AnswerEvaluation,
+  type ExerciseGenerationWord,
   type ExistingVocabularyCandidate,
   type GeneratedExample,
+  type GeneratedExerciseSet,
   type ParsedVocabularyProposal,
 } from "../types";
 
@@ -207,6 +210,60 @@ export class OpenAIProvider implements AIProvider {
 
     const raw = await this.call(system, user);
     return this.validate(answerEvaluationSchema, this.parseJson(raw), "evaluateAnswer");
+  }
+
+  async generateExercises(input: {
+    words: ExerciseGenerationWord[];
+    translationLanguage: string;
+  }): Promise<GeneratedExerciseSet[]> {
+    if (input.words.length === 0) return [];
+    const language = input.translationLanguage === "ru" ? "Russian" : "English";
+    const system = [
+      "You write Spanish vocabulary practice questions for an A1–A2 learner.",
+      `The learner's language is ${language}: translations and instructions are in ${language}.`,
+      'Return a JSON object: { "words": [ { "key": string, "exercises": [ ... ] } ] },',
+      "with one entry per input word, echoing its key.",
+      "Each exercise is { exerciseType, instruction, promptText, options?, correctAnswer,",
+      "acceptedAnswers }. For each word write exactly:",
+      `- 2 "multiple_choice": promptText is the Spanish word (or a short Spanish phrase using it),`,
+      `  options are 4 ${language} meanings (one correct, three plausible but clearly wrong).`,
+      `- 2 "multiple_choice_reverse": promptText is the ${language} meaning, options are 4`,
+      "  Spanish words of the same part of speech (one correct).",
+      `- 1 "recall": promptText is the ${language} meaning; the learner types the Spanish word.`,
+      `- 2 "cloze": promptText is a NEW short natural Spanish sentence with the word replaced`,
+      `  by "_____" followed by the ${language} hint in parentheses; the answer is the exact`,
+      "  form that fits (it may be an inflected form).",
+      "correctAnswer must appear verbatim among options for multiple choice.",
+      "acceptedAnswers lists every answer that must be graded correct (include the",
+      "correct answer; for recall add accepted variants such as articles or inflections).",
+      "Never include the answer in promptText except the Spanish word in multiple_choice.",
+    ].join(" ");
+    const user = JSON.stringify({
+      words: input.words.map((word) => ({
+        key: word.key,
+        lemma: word.lemma,
+        translation: word.translation,
+        partOfSpeech: word.partOfSpeech,
+        forms: word.forms,
+        example: word.exampleSentence ?? undefined,
+      })),
+    });
+
+    const raw = await this.call(system, user);
+    const parsed = this.parseJson(raw) as { words?: unknown };
+    const entries = Array.isArray(parsed.words) ? parsed.words : [];
+    const sets: GeneratedExerciseSet[] = [];
+    for (const entry of entries) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const record = entry as { key?: unknown; exercises?: unknown };
+      if (typeof record.key !== "string" || !Array.isArray(record.exercises)) continue;
+      const exercises = record.exercises.flatMap((candidate) => {
+        const result = generatedExerciseSchema.safeParse(candidate);
+        return result.success ? [result.data] : [];
+      });
+      sets.push({ key: record.key, exercises });
+    }
+    return sets;
   }
 
   /** Runs one request through the rate limiter, retry, and timeout stack. */

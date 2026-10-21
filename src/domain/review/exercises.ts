@@ -7,7 +7,12 @@
  * delegated to the AI adapter by the practice service, not by this module.
  */
 
-export const exerciseTypes = ["multiple_choice", "recall", "cloze"] as const;
+export const exerciseTypes = [
+  "multiple_choice",
+  "multiple_choice_reverse",
+  "recall",
+  "cloze",
+] as const;
 
 export type ExerciseType = (typeof exerciseTypes)[number];
 
@@ -34,6 +39,25 @@ export type ExercisePrompt = {
   isNew: boolean;
 };
 
+/**
+ * A fully prepared exercise: the prompt plus everything needed to grade it
+ * locally. Produced either from the pre-generated question bank or
+ * deterministically by {@link buildPrompt}.
+ */
+export type PracticeExercise = ExercisePrompt & {
+  /** The canonical answer shown as feedback. */
+  correctAnswer: string;
+  /** Every answer accepted as correct (compared after normalization). */
+  acceptedAnswers: string[];
+  /** The bank item this exercise came from, or null when built deterministically. */
+  bankItemId: string | null;
+};
+
+/** True for the two multiple-choice exercise types. */
+export function isMultipleChoice(type: ExerciseType): boolean {
+  return type === "multiple_choice" || type === "multiple_choice_reverse";
+}
+
 /** Strips diacritics, case, surrounding punctuation, and extra whitespace. */
 export function normalizeAnswer(value: string): string {
   return value
@@ -46,20 +70,29 @@ export function normalizeAnswer(value: string): string {
 }
 
 /**
- * Picks an exercise type from the learner's history with a word. New words and
- * words with few recalls get the most supportive format; cloze is only used
- * when a usable example sentence is available.
+ * Picks an exercise type from the learner's history with a word. Difficulty
+ * grows gradually: recognition (Spanish → translation), then reverse
+ * recognition (translation → Spanish), then typed recall, and finally cloze
+ * once a usable sentence (example or pre-generated bank cloze) is available.
  */
 export function selectExerciseType(input: {
   isNew: boolean;
   successfulRecalls: number;
   exampleSentence?: string | null;
   lemma: string;
+  /** Whether a pre-generated cloze exercise exists for the word. */
+  clozeAvailable?: boolean;
 }): ExerciseType {
   if (input.isNew || input.successfulRecalls < 1) {
     return "multiple_choice";
   }
-  if (input.successfulRecalls >= 3 && hasUsableCloze(input.exampleSentence, input.lemma)) {
+  if (input.successfulRecalls === 1) {
+    return "multiple_choice_reverse";
+  }
+  if (
+    input.successfulRecalls >= 3 &&
+    (input.clozeAvailable || hasUsableCloze(input.exampleSentence, input.lemma))
+  ) {
     return "cloze";
   }
   return "recall";
@@ -70,7 +103,7 @@ function hasUsableCloze(sentence: string | null | undefined, lemma: string): boo
   return clozeSentence(sentence, lemma) !== null;
 }
 
-const CLOZE_BLANK = "_____";
+export const CLOZE_BLANK = "_____";
 
 /** Replaces the first whole-word occurrence of the lemma with a blank. */
 function clozeSentence(sentence: string, lemma: string): string | null {
@@ -89,6 +122,8 @@ export function acceptedAnswers(word: ExerciseWord, type: ExerciseType): string[
   switch (type) {
     case "multiple_choice":
       return [word.translation];
+    case "multiple_choice_reverse":
+      return [word.lemma];
     case "recall":
     case "cloze":
       return [word.lemma, ...(word.forms ?? [])];
@@ -98,6 +133,25 @@ export function acceptedAnswers(word: ExerciseWord, type: ExerciseType): string[
 /** The human-readable "expected meaning" used for feedback and AI evaluation. */
 export function expectedMeaning(word: ExerciseWord, type: ExerciseType): string {
   return type === "multiple_choice" ? word.translation : word.lemma;
+}
+
+/**
+ * Builds a gradable exercise deterministically from the word itself, used
+ * when the question bank has nothing for the requested type.
+ */
+export function buildExercise(
+  word: ExerciseWord,
+  type: ExerciseType,
+  isNew: boolean,
+  distractors: string[] = [],
+): PracticeExercise {
+  const prompt = buildPrompt(word, type, isNew, distractors);
+  return {
+    ...prompt,
+    correctAnswer: expectedMeaning(word, prompt.exerciseType),
+    acceptedAnswers: acceptedAnswers(word, prompt.exerciseType),
+    bankItemId: null,
+  };
 }
 
 /**
@@ -119,6 +173,15 @@ export function buildPrompt(
         ...base,
         instruction: "Choose the correct translation.",
         promptText: word.lemma,
+        options,
+      };
+    }
+    case "multiple_choice_reverse": {
+      const options = orderOptions(word.lemma, distractors);
+      return {
+        ...base,
+        instruction: "Choose the Spanish word.",
+        promptText: word.translation,
         options,
       };
     }
@@ -151,7 +214,7 @@ export function buildPrompt(
 }
 
 /** Correct option plus distractors, ordered deterministically (alphabetical). */
-function orderOptions(correct: string, distractors: string[]): string[] {
+export function orderOptions(correct: string, distractors: string[]): string[] {
   const unique = new Set<string>([correct]);
   for (const distractor of distractors) {
     if (normalizeAnswer(distractor) !== normalizeAnswer(correct)) {
@@ -174,4 +237,24 @@ export function gradeObjective(
   const normalized = normalizeAnswer(submittedAnswer);
   if (normalized.length === 0) return false;
   return acceptedAnswers(word, type).some((answer) => normalizeAnswer(answer) === normalized);
+}
+
+export type AnswerGrade = "recalled" | "recalled_with_hint" | "wrong" | "skipped";
+
+/**
+ * Grades an answer against a prepared exercise. Purely local and
+ * deterministic, so the client (offline) and the server (on sync) always
+ * agree. A mismatch is wrong; there is no AI fallback.
+ */
+export function gradeAnswer(
+  accepted: string[],
+  submittedAnswer: string | null | undefined,
+  options: { usedHint?: boolean; skipped?: boolean } = {},
+): AnswerGrade {
+  if (options.skipped) return "skipped";
+  const normalized = normalizeAnswer(submittedAnswer ?? "");
+  if (normalized.length === 0) return "wrong";
+  const match = accepted.some((answer) => normalizeAnswer(answer) === normalized);
+  if (!match) return "wrong";
+  return options.usedHint ? "recalled_with_hint" : "recalled";
 }

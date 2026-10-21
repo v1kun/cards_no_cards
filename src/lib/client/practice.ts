@@ -1,87 +1,57 @@
 "use client";
 
+import type { PracticeSnapshot } from "@/domain/review/snapshot";
 import { apiFetch } from "./api";
+import {
+  OfflinePractice,
+  type OfflineApi,
+  type SyncRequest,
+  type SyncResponse,
+} from "./offline-practice";
+import { IndexedDbOfflineStore } from "./offline-store";
 
-export type ExerciseType = "multiple_choice" | "recall" | "cloze";
-
-export type ReviewResult = "recalled" | "recalled_with_hint" | "wrong" | "skipped";
-
-export type ExercisePromptDto = {
-  vocabularyItemId: string;
-  exerciseType: ExerciseType;
-  instruction: string;
-  promptText: string;
-  options?: string[];
-  isNew: boolean;
+const api: OfflineApi = {
+  fetchSnapshot: () => apiFetch<PracticeSnapshot>("/api/v1/offline/snapshot"),
+  sync: (body: SyncRequest) =>
+    apiFetch<SyncResponse>("/api/v1/review/sync", { method: "POST", body: JSON.stringify(body) }),
 };
 
-export type PracticeSessionDto = {
-  id: string;
-  status: "active" | "completed" | "abandoned";
-  startedAt: string;
-  finishedAt: string | null;
-  targetDurationSeconds: number;
-};
+let engine: OfflinePractice | null = null;
 
-export type SessionPlanDto = {
-  session: PracticeSessionDto | null;
-  exercises: ExercisePromptDto[];
-};
-
-export type ReinforcementDto = {
-  correctAnswer: string;
-  exampleSentence: string | null;
-  exampleTranslation: string | null;
-};
-
-export type GradedOutcomeDto = {
-  status: "graded";
-  result: ReviewResult;
-  correct: boolean;
-  feedback: string;
-  correctAnswer: string;
-  reinforcement: ReinforcementDto | null;
-  nextDueAt: string | null;
-  duplicate: boolean;
-};
-
-export type AttemptOutcomeDto = GradedOutcomeDto | { status: "uncertain"; feedback: string };
-
-export type SessionSummaryDto = {
-  sessionId: string;
-  wordsPracticed: number;
-  totalAttempts: number;
-  recalled: number;
-  recalledWithHint: number;
-  wrong: number;
-  skipped: number;
-};
-
-export function startReviewSession(): Promise<SessionPlanDto> {
-  return apiFetch<SessionPlanDto>("/api/v1/review/session", { method: "POST" });
+/** The browser's single practice engine (IndexedDB-backed). */
+export function getPracticeEngine(): OfflinePractice {
+  engine ??= new OfflinePractice(new IndexedDbOfflineStore(), api);
+  return engine;
 }
 
-export function submitAttempt(input: {
-  sessionId: string;
-  vocabularyItemId: string;
-  exerciseType: ExerciseType;
-  submittedAnswer?: string;
-  usedHint?: boolean;
-  skipped?: boolean;
-  latencyMs?: number;
-  attemptId?: string;
-}): Promise<AttemptOutcomeDto> {
-  return apiFetch<AttemptOutcomeDto>("/api/v1/review/attempts", {
+export type BankStatus = {
+  totalWords: number;
+  upToDate: number;
+  missing: number;
+  stale: number;
+  pending: number;
+};
+
+export type BankRefreshResult = {
+  processed: number;
+  succeeded: number;
+  failed: { id: string; lemma: string }[];
+  remaining: number;
+};
+
+export function getBankStatus(): Promise<BankStatus> {
+  return apiFetch<BankStatus>("/api/v1/exercise-bank/status");
+}
+
+export function refreshBank(exclude: string[]): Promise<BankRefreshResult> {
+  return apiFetch<BankRefreshResult>("/api/v1/exercise-bank/refresh", {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({ exclude }),
   });
 }
 
-export function completeReviewSession(
-  id: string,
-): Promise<{ session: PracticeSessionDto; summary: SessionSummaryDto }> {
-  return apiFetch<{ session: PracticeSessionDto; summary: SessionSummaryDto }>(
-    `/api/v1/review/session/${id}`,
-    { method: "PATCH" },
-  );
+export function regenerateWordExercises(id: string): Promise<{ count: number }> {
+  return apiFetch<{ count: number }>(`/api/v1/vocabulary/${id}/exercises/regenerate`, {
+    method: "POST",
+  });
 }

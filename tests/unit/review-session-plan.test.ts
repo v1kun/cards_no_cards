@@ -1,0 +1,138 @@
+import { describe, expect, it } from "vitest";
+
+import type { BankItem } from "@/domain/review/bank";
+import { initialSchedulingState, type SchedulingState } from "@/domain/review/schedule";
+import { planSession, summarizeSections, type PlanWord } from "@/domain/review/session-plan";
+
+const now = new Date("2026-02-01T00:00:00Z");
+
+function word(id: string, overrides: Partial<PlanWord> = {}): PlanWord {
+  return {
+    id,
+    lemma: `lemma-${id}`,
+    translation: `translation-${id}`,
+    partOfSpeech: "noun",
+    exampleSentence: null,
+    forms: [],
+    createdAt: Number(id.replace(/\D/g, "")) || 0,
+    topicIds: [],
+    ...overrides,
+  };
+}
+
+function introduced(overrides: Partial<SchedulingState> = {}): SchedulingState {
+  return {
+    ...initialSchedulingState(),
+    introducedAt: new Date("2026-01-01T00:00:00Z"),
+    dueAt: new Date("2026-01-10T00:00:00Z"),
+    reviewStage: 1,
+    successfulRecalls: 1,
+    lastReviewedAt: new Date("2026-01-09T00:00:00Z"),
+    ...overrides,
+  };
+}
+
+describe("planSession", () => {
+  it("puts due words first, then caps new words, oldest first", () => {
+    const words = Array.from({ length: 10 }, (_, i) => word(`w${i + 1}`));
+    const states = new Map([["w9", introduced()]]);
+    const plan = planSession({ words, states, bank: [], now });
+    expect(plan.map((e) => e.vocabularyItemId)).toEqual(["w9", "w1", "w2", "w3", "w4", "w5"]);
+    expect(plan[0]!.isNew).toBe(false);
+    expect(plan[1]!.isNew).toBe(true);
+  });
+
+  it("skips words that are introduced but not yet due", () => {
+    const words = [word("w1"), word("w2")];
+    const states = new Map([["w1", introduced({ dueAt: new Date("2026-03-01T00:00:00Z") })]]);
+    expect(planSession({ words, states, bank: [], now }).map((e) => e.vocabularyItemId)).toEqual([
+      "w2",
+    ]);
+  });
+
+  it("restricts selection to the chosen topic, part of speech, or uncategorized", () => {
+    const words = [
+      word("w1", { topicIds: ["food"] }),
+      word("w2", { topicIds: ["home"], partOfSpeech: "verb" }),
+      word("w3"),
+    ];
+    const states = new Map<string, SchedulingState>();
+    const ids = (filter: Parameters<typeof planSession>[0]["filter"]) =>
+      planSession({ words, states, bank: [], now, filter }).map((e) => e.vocabularyItemId);
+    expect(ids({ kind: "topic", topicId: "food" })).toEqual(["w1"]);
+    expect(ids({ kind: "pos", partOfSpeech: "verb" })).toEqual(["w2"]);
+    expect(ids({ kind: "topic", topicId: null })).toEqual(["w3"]);
+    expect(ids({ kind: "all" })).toEqual(["w1", "w2", "w3"]);
+  });
+
+  it("uses a bank question of the selected type when available", () => {
+    const words = [word("w1"), word("w2"), word("w3")];
+    const bank: BankItem[] = [
+      {
+        id: "b1",
+        vocabularyItemId: "w1",
+        exerciseType: "multiple_choice",
+        sourceHash: "h",
+        payload: {
+          instruction: "Pick.",
+          promptText: "lemma-w1",
+          options: ["translation-w1", "x", "y"],
+          correctAnswer: "translation-w1",
+          acceptedAnswers: ["translation-w1"],
+        },
+      },
+    ];
+    const plan = planSession({ words, states: new Map(), bank, now });
+    expect(plan[0]!.bankItemId).toBe("b1");
+    expect(plan[1]!.bankItemId).toBeNull();
+    expect(plan[1]!.exerciseType).toBe("multiple_choice");
+    expect(plan[1]!.options).toContain("translation-w2");
+  });
+
+  it("uses reverse multiple choice with Spanish options after one recall", () => {
+    const words = [word("w1"), word("w2"), word("w3")];
+    const states = new Map([["w1", introduced()]]);
+    const [first] = planSession({ words, states, bank: [], now });
+    expect(first!.exerciseType).toBe("multiple_choice_reverse");
+    expect(first!.promptText).toBe("translation-w1");
+    expect(first!.options).toContain("lemma-w1");
+    expect(first!.acceptedAnswers).toEqual(["lemma-w1"]);
+  });
+
+  it("falls back to recall when no distractors exist", () => {
+    const [only] = planSession({ words: [word("w1")], states: new Map(), bank: [], now });
+    expect(only!.exerciseType).toBe("recall");
+  });
+});
+
+describe("summarizeSections", () => {
+  it("counts new, due, and learned words per section", () => {
+    const words = [
+      word("w1", { topicIds: ["food"] }),
+      word("w2", { topicIds: ["food"], partOfSpeech: "verb" }),
+      word("w3"),
+    ];
+    const states = new Map([
+      ["w1", introduced()],
+      ["w2", introduced({ dueAt: new Date("2026-03-01T00:00:00Z") })],
+    ]);
+    const summary = summarizeSections({
+      words,
+      states,
+      topics: [
+        { id: "food", name: "Food" },
+        { id: "empty", name: "Empty" },
+      ],
+      now,
+    });
+    expect(summary.all).toEqual({ total: 3, learned: 1, due: 1, new: 1 });
+    expect(summary.topics).toEqual([
+      { topicId: "food", name: "Food", counts: { total: 2, learned: 1, due: 1, new: 0 } },
+      { topicId: null, name: "Uncategorized", counts: { total: 1, learned: 0, due: 0, new: 1 } },
+    ]);
+    expect(summary.partsOfSpeech[0]).toEqual({
+      partOfSpeech: "noun",
+      counts: { total: 2, learned: 0, due: 1, new: 1 },
+    });
+  });
+});

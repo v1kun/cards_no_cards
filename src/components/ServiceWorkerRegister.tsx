@@ -20,6 +20,11 @@ export function ServiceWorkerRegister() {
       });
     };
 
+    // The effect can run after `load` has already fired (hydration is async).
+    if (document.readyState === "complete") {
+      register();
+      return;
+    }
     window.addEventListener("load", register);
     return () => window.removeEventListener("load", register);
   }, []);

@@ -1,8 +1,10 @@
 import type {
   AIProvider,
   AnswerEvaluation,
+  ExerciseGenerationWord,
   ExistingVocabularyCandidate,
   GeneratedExample,
+  GeneratedExerciseSet,
   ParsedVocabularyProposal,
 } from "../types";
 
@@ -76,5 +78,46 @@ export class MockAIProvider implements AIProvider {
       return { result: "partially_correct", feedback: "Close — check the exact wording." };
     }
     return { result: "incorrect", feedback: `Expected: ${input.expectedMeaning}.` };
+  }
+
+  async generateExercises(input: {
+    words: ExerciseGenerationWord[];
+    translationLanguage: string;
+  }): Promise<GeneratedExerciseSet[]> {
+    return input.words.map((word) => ({
+      key: word.key,
+      exercises: [
+        {
+          exerciseType: "multiple_choice",
+          instruction: "Choose the correct translation.",
+          promptText: word.lemma,
+          options: [word.translation, `not ${word.translation}`, `${word.translation} again`],
+          correctAnswer: word.translation,
+          acceptedAnswers: [word.translation],
+        },
+        {
+          exerciseType: "multiple_choice_reverse",
+          instruction: "Choose the Spanish word.",
+          promptText: word.translation,
+          options: [word.lemma, `${word.lemma}ito`, `re${word.lemma}`],
+          correctAnswer: word.lemma,
+          acceptedAnswers: [word.lemma],
+        },
+        {
+          exerciseType: "recall",
+          instruction: "Type the Spanish word.",
+          promptText: word.translation,
+          correctAnswer: word.lemma,
+          acceptedAnswers: [word.lemma, ...word.forms],
+        },
+        {
+          exerciseType: "cloze",
+          instruction: "Fill in the missing word.",
+          promptText: `Cada día uso _____ con cuidado. (${word.translation})`,
+          correctAnswer: word.lemma,
+          acceptedAnswers: [word.lemma, ...word.forms],
+        },
+      ],
+    }));
   }
 }

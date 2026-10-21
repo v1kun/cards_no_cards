@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { PageHeader } from "@/components/ui";
 import { ApiClientError } from "@/lib/client/api";
 import {
   createVocabulary,
@@ -113,17 +114,21 @@ export default function VocabularyPage() {
 
   return (
     <main>
-      <p>
-        <Link href="/">← Home</Link>
-        {" · "}
-        <Link href="/import">Import from notes →</Link>
-        {" · "}
-        <Link href="/practice">Practice →</Link>
-      </p>
-      <h1>Vocabulary</h1>
+      <PageHeader title="Vocabulary" back={{ href: "/", label: "Home" }}>
+        <div className="row">
+          <Link className="button secondary" href="/import">
+            Import
+          </Link>
+          <Link className="button" href="/practice">
+            Practice
+          </Link>
+        </div>
+      </PageHeader>
 
-      <section className="card" aria-label="Add a word">
-        <h2>Add a word</h2>
+      <details className="card disclosure">
+        <summary>
+          <h2>＋ Add a word</h2>
+        </summary>
         <form onSubmit={onCreate} className="stack">
           <div className="row">
             <label className="field">
@@ -175,7 +180,7 @@ export default function VocabularyPage() {
             </button>
           </div>
         </form>
-      </section>
+      </details>
 
       <section className="card" aria-label="Filters">
         <div className="row">
@@ -243,7 +248,9 @@ export default function VocabularyPage() {
             </button>
           </div>
         ) : items.length === 0 ? (
-          <p className="muted">No words match these filters yet. Add your first word above.</p>
+          <p className="muted">
+            No words match these filters yet. Add your first word with “Add a word” above.
+          </p>
         ) : (
           <>
             <ul className="list">

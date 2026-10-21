@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Database } from "@/server/db/client";
@@ -13,19 +13,6 @@ import {
 export type ReviewState = typeof reviewStates.$inferSelect;
 export type ReviewAttempt = typeof reviewAttempts.$inferSelect;
 export type PracticeSession = typeof practiceSessions.$inferSelect;
-
-/** A word selected for a practice session, with its current scheduling state. */
-export type SessionWord = {
-  item: {
-    id: string;
-    lemma: string;
-    translation: string;
-    partOfSpeech: string;
-    exampleSentence: string | null;
-  };
-  state: ReviewState | null;
-  isNew: boolean;
-};
 
 export const recordAttemptSchema = z.object({
   vocabularyItemId: z.string().min(1),
@@ -161,16 +148,6 @@ export class ReviewRepository {
       .orderBy(asc(reviewAttempts.createdAt), asc(sql`rowid`));
   }
 
-  // --- Practice sessions ---------------------------------------------------
-
-  async createSession(userId: string): Promise<PracticeSession> {
-    const rows = await this.db.insert(practiceSessions).values({ userId }).returning();
-    if (!rows[0]) {
-      throw new Error("Failed to create practice session");
-    }
-    return rows[0];
-  }
-
   async getSession(userId: string, id: string): Promise<PracticeSession | null> {
     const rows = await this.db
       .select()
@@ -178,69 +155,6 @@ export class ReviewRepository {
       .where(and(eq(practiceSessions.userId, userId), eq(practiceSessions.id, id)))
       .limit(1);
     return rows[0] ?? null;
-  }
-
-  async completeSession(
-    userId: string,
-    id: string,
-    summary: unknown,
-  ): Promise<PracticeSession | null> {
-    const rows = await this.db
-      .update(practiceSessions)
-      .set({ status: "completed", finishedAt: new Date(), summary: JSON.stringify(summary) })
-      .where(and(eq(practiceSessions.userId, userId), eq(practiceSessions.id, id)))
-      .returning();
-    return rows[0] ?? null;
-  }
-
-  // --- Word selection ------------------------------------------------------
-
-  /** Words whose scheduled review is due (introduced and `due_at` in the past). */
-  async listDueReviews(userId: string, now: Date, limit: number): Promise<SessionWord[]> {
-    const rows = await this.db
-      .select({ state: reviewStates, item: this.itemColumns() })
-      .from(reviewStates)
-      .innerJoin(vocabularyItems, eq(vocabularyItems.id, reviewStates.vocabularyItemId))
-      .where(
-        and(
-          eq(reviewStates.userId, userId),
-          eq(vocabularyItems.status, "active"),
-          sql`${reviewStates.introducedAt} is not null`,
-          lte(reviewStates.dueAt, now),
-        ),
-      )
-      .orderBy(asc(reviewStates.dueAt))
-      .limit(limit);
-    return rows.map((row) => ({ item: row.item, state: row.state, isNew: false }));
-  }
-
-  /** Active words never introduced yet (no state, or `introduced_at` null). */
-  async listNewWords(userId: string, limit: number): Promise<SessionWord[]> {
-    const rows = await this.db
-      .select({ item: this.itemColumns(), state: reviewStates })
-      .from(vocabularyItems)
-      .leftJoin(reviewStates, eq(reviewStates.vocabularyItemId, vocabularyItems.id))
-      .where(
-        and(
-          eq(vocabularyItems.userId, userId),
-          eq(vocabularyItems.status, "active"),
-          or(isNull(reviewStates.id), isNull(reviewStates.introducedAt)),
-        ),
-      )
-      .orderBy(asc(vocabularyItems.createdAt))
-      .limit(limit);
-    return rows.map((row) => ({ item: row.item, state: row.state ?? null, isNew: true }));
-  }
-
-  /** A pool of translations from the user's active words, for distractors. */
-  async translationPool(userId: string, limit: number): Promise<string[]> {
-    const rows = await this.db
-      .select({ translation: vocabularyItems.translation })
-      .from(vocabularyItems)
-      .where(and(eq(vocabularyItems.userId, userId), eq(vocabularyItems.status, "active")))
-      .orderBy(desc(vocabularyItems.createdAt))
-      .limit(limit);
-    return rows.map((row) => row.translation);
   }
 
   /** Count of active, already-introduced words whose review is due by `now`. */
@@ -274,15 +188,5 @@ export class ReviewRepository {
         ),
       );
     return row?.value ?? 0;
-  }
-
-  private itemColumns() {
-    return {
-      id: vocabularyItems.id,
-      lemma: vocabularyItems.lemma,
-      translation: vocabularyItems.translation,
-      partOfSpeech: vocabularyItems.partOfSpeech,
-      exampleSentence: vocabularyItems.exampleSentence,
-    };
   }
 }

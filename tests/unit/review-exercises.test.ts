@@ -24,10 +24,27 @@ describe("selectExerciseType", () => {
     );
   });
 
-  it("moves to recall once the learner has recalled the word", () => {
+  it("moves to reverse multiple choice after the first recall", () => {
     expect(selectExerciseType({ isNew: false, successfulRecalls: 1, lemma: word.lemma })).toBe(
+      "multiple_choice_reverse",
+    );
+  });
+
+  it("moves to typed recall after two recalls", () => {
+    expect(selectExerciseType({ isNew: false, successfulRecalls: 2, lemma: word.lemma })).toBe(
       "recall",
     );
+  });
+
+  it("uses cloze when a bank cloze exists even without an example", () => {
+    expect(
+      selectExerciseType({
+        isNew: false,
+        successfulRecalls: 3,
+        lemma: word.lemma,
+        clozeAvailable: true,
+      }),
+    ).toBe("cloze");
   });
 
   it("uses cloze for well-known words with a usable example sentence", () => {
