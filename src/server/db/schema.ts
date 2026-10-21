@@ -373,3 +373,18 @@ export const schema = {
   practiceSessions,
   exerciseBankItems,
 };
+
+/**
+ * Temporary local login accounts (`AUTH_PROVIDER=local`). Maps a login and
+ * scrypt password hash to the `user_id` that owns the data. To be replaced
+ * by Amazon Cognito — see DEFERRED_FEATURES.md (tech debt).
+ */
+export const localAccounts = sqliteTable("local_accounts", {
+  id: uuid(),
+  login: text("login").notNull().unique(),
+  userId: text("user_id").notNull().unique(),
+  displayName: text("display_name"),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});

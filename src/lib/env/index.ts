@@ -22,10 +22,14 @@ const envSchema = z
     AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
     AI_MIN_REQUEST_INTERVAL_MS: z.coerce.number().int().min(0).default(0),
-    // Authentication provider. `dev` resolves a local mock session for
-    // development and tests; `cognito` (Amazon Cognito + Apple) is wired up
-    // in a later phase.
-    AUTH_PROVIDER: z.enum(["dev", "cognito"]).default("dev"),
+    // Authentication provider. `local` (default) is a temporary login and
+    // password flow backed by the `local_accounts` table; `dev` resolves a
+    // mock session without login (tests, tooling); `cognito` (Amazon Cognito
+    // + Apple) is wired up in a later phase.
+    AUTH_PROVIDER: z.enum(["local", "dev", "cognito"]).default("local"),
+    // Signs `local` session cookies. When unset, a random secret is kept in
+    // local-data/session-secret.
+    SESSION_SECRET: z.string().min(16).optional(),
     // Identity of the local development user used by the `dev` auth provider.
     DEV_USER_ID: z.string().min(1).default("dev-user"),
     DEV_USER_EMAIL: z.string().email().default("dev@example.com"),

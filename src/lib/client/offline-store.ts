@@ -73,7 +73,20 @@ export class MemoryOfflineStore implements OfflineStore {
   }
 }
 
-const DB_NAME = "cards-no-cards";
+const DB_PREFIX = "cards-no-cards";
+
+/** Each user gets their own offline database on a shared device. */
+export function offlineDbName(userId: string): string {
+  return `${DB_PREFIX}:${userId}`;
+}
+
+/** Deletes a user's offline database (used on sign-out). */
+export function deleteOfflineDb(userId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const request = indexedDB.deleteDatabase(offlineDbName(userId));
+    request.onsuccess = request.onerror = request.onblocked = () => resolve();
+  });
+}
 const DB_VERSION = 1;
 const KV = "kv";
 const ATTEMPTS = "attempts";
@@ -98,9 +111,18 @@ function done(tx: IDBTransaction): Promise<void> {
 export class IndexedDbOfflineStore implements OfflineStore {
   private dbPromise: Promise<IDBDatabase> | null = null;
 
+  constructor(private readonly name: string) {}
+
+  /** Closes the connection so the database can be deleted. */
+  async close(): Promise<void> {
+    if (!this.dbPromise) return;
+    (await this.dbPromise.catch(() => null))?.close();
+    this.dbPromise = null;
+  }
+
   private db(): Promise<IDBDatabase> {
     this.dbPromise ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      const request = indexedDB.open(this.name, DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains(KV)) db.createObjectStore(KV);

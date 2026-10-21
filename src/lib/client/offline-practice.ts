@@ -81,6 +81,20 @@ function errorStatus(error: unknown): number {
 }
 
 /**
+ * A UUID v4. `crypto.randomUUID` exists only in secure contexts (HTTPS or
+ * localhost), so opening the app over plain HTTP on the LAN falls back to
+ * `getRandomValues`, which is available everywhere.
+ */
+export function randomId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
  * The client-side practice engine. Practice reads only the local snapshot,
  * so it works fully offline; answers go to a durable outbox that is synced
  * whenever the network allows. All store mutations are serialized.
@@ -92,7 +106,7 @@ export class OfflinePractice {
     private readonly store: OfflineStore,
     private readonly api: OfflineApi,
     private readonly clock: () => number = () => Date.now(),
-    private readonly newId: () => string = () => crypto.randomUUID(),
+    private readonly newId: () => string = randomId,
   ) {}
 
   private exclusive<T>(run: () => Promise<T>): Promise<T> {

@@ -1,21 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Spinner } from "@/components/ui";
 import { getPracticeEngine } from "@/lib/client/practice";
 import { usePracticeData } from "@/lib/client/use-practice";
+import { getCurrentUser } from "@/lib/client/user";
 
 const NAV = [
   { href: "/vocabulary", emoji: "📚", title: "Vocabulary", text: "Browse, add and edit words" },
   { href: "/import", emoji: "📝", title: "Import a lesson", text: "Turn lesson notes into words" },
-  { href: "/settings", emoji: "⚙️", title: "Settings", text: "Translation language" },
+  { href: "/settings", emoji: "⚙️", title: "Settings", text: "Language & account" },
   { href: "/shortcuts", emoji: "🎙️", title: "Voice capture", text: "Add words with Siri" },
   { href: "/install", emoji: "📲", title: "Install on iPhone", text: "Home screen & offline use" },
 ];
 
 export default function HomePage() {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => setName(getCurrentUser()?.name ?? null), []);
   const { snapshot, loading, pending } = usePracticeData({ refreshOnMount: "if-missing" });
   const counts = useMemo(
     () => (snapshot ? getPracticeEngine().sections(snapshot).all : null),
@@ -26,7 +29,7 @@ export default function HomePage() {
     <main className="stack-lg">
       <header className="stack" style={{ gap: "0.25rem" }}>
         <span className="eyebrow">Cards No Cards</span>
-        <h1 style={{ margin: 0 }}>¡Hola! 👋</h1>
+        <h1 style={{ margin: 0 }}>¡Hola{name ? `, ${name}` : ""}! 👋</h1>
         <p className="muted">Your Spanish words, practiced a little every day.</p>
       </header>
 

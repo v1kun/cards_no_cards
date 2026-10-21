@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PracticeSnapshot, SnapshotState } from "@/domain/review/snapshot";
 import {
   OfflinePractice,
+  randomId,
   type OfflineApi,
   type SyncRequest,
   type SyncResponse,
@@ -198,5 +199,20 @@ describe("OfflinePractice", () => {
     api.failStatus = 400;
     expect(await engine.sync()).toEqual({ ok: true, synced: 0, rejected: 1 });
     expect(await engine.pendingCount()).toBe(0);
+  });
+});
+
+describe("randomId", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("makes UUID v4 values without crypto.randomUUID (plain HTTP on the LAN)", () => {
+    vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto) });
+    const ids = new Set(Array.from({ length: 50 }, () => randomId()));
+    expect(ids.size).toBe(50);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
   });
 });

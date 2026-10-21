@@ -98,18 +98,28 @@ export function SectionTile({
 export function PageHeader({
   title,
   back,
+  aside,
   children,
 }: {
   title: ReactNode;
   back?: { href: string; label: string };
+  /** Shown at the top right, next to the back link (e.g. a status pill). */
+  aside?: ReactNode;
   children?: ReactNode;
 }) {
   return (
     <header className="page-header-block">
-      {back ? (
-        <Link className="back-link" href={back.href}>
-          ← {back.label}
-        </Link>
+      {back || aside ? (
+        <div className="page-header-top">
+          {back ? (
+            <Link className="back-link" href={back.href}>
+              ← {back.label}
+            </Link>
+          ) : (
+            <span />
+          )}
+          {aside}
+        </div>
       ) : null}
       <div className="spread">
         <h1>{title}</h1>

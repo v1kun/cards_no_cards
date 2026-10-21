@@ -3,6 +3,8 @@ import "server-only";
 import { env } from "@/lib/env";
 import type { AuthProvider } from "./types";
 import { DevAuthProvider } from "./adapters/dev-provider";
+import { LocalAuthProvider } from "./adapters/local-provider";
+import { sessionSecret } from "./local/secret";
 
 /**
  * Returns the configured authentication provider adapter.
@@ -19,6 +21,8 @@ export function createAuthProvider(): AuthProvider {
         email: env.DEV_USER_EMAIL,
         name: env.DEV_USER_NAME,
       });
+    case "local":
+      return new LocalAuthProvider(() => sessionSecret(env.SESSION_SECRET));
     case "cognito":
       // The Cognito adapter is introduced in the deployment/auth phase.
       throw new Error(

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { PageHeader, ProgressBar, Spinner } from "@/components/ui";
 import {
   isMultipleChoice,
@@ -197,7 +198,11 @@ function PracticeSession() {
   if (phase.kind === "loading") {
     return (
       <main>
-        <PageHeader title={title} back={{ href: "/practice", label: "Sections" }} />
+        <PageHeader
+          title={title}
+          back={{ href: "/practice", label: "Sections" }}
+          aside={<ConnectionStatus />}
+        />
         <p className="muted row center">
           <Spinner /> Preparing your session…
         </p>
@@ -208,7 +213,11 @@ function PracticeSession() {
   if (phase.kind === "missing") {
     return (
       <main>
-        <PageHeader title="Practice" back={{ href: "/practice", label: "Sections" }} />
+        <PageHeader
+          title="Practice"
+          back={{ href: "/practice", label: "Sections" }}
+          aside={<ConnectionStatus />}
+        />
         <section className="card empty-state">
           <span className="emoji" aria-hidden="true">
             📶
@@ -226,7 +235,11 @@ function PracticeSession() {
   if (phase.kind === "empty") {
     return (
       <main>
-        <PageHeader title={title} back={{ href: "/practice", label: "Sections" }} />
+        <PageHeader
+          title={title}
+          back={{ href: "/practice", label: "Sections" }}
+          aside={<ConnectionStatus />}
+        />
         <section className="card empty-state">
           <span className="emoji" aria-hidden="true">
             ✅
@@ -248,7 +261,11 @@ function PracticeSession() {
     const correct = summary.recalled + summary.recalledWithHint;
     return (
       <main>
-        <PageHeader title="Session complete" back={{ href: "/practice", label: "Sections" }} />
+        <PageHeader
+          title="Session complete"
+          back={{ href: "/practice", label: "Sections" }}
+          aside={<ConnectionStatus />}
+        />
         <section className="card hero stack-lg">
           <div className="center stack" style={{ gap: "0.25rem" }}>
             <span style={{ fontSize: "2.5rem" }} aria-hidden="true">
@@ -299,7 +316,11 @@ function PracticeSession() {
 
   return (
     <main>
-      <PageHeader title={title} back={{ href: "/practice", label: "Sections" }}>
+      <PageHeader
+        title={title}
+        back={{ href: "/practice", label: "Sections" }}
+        aside={<ConnectionStatus />}
+      >
         <span className="muted small">
           {index + 1} / {exercises.length}
         </span>

@@ -16,5 +16,7 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts", "src/**/*.test.ts"],
     globals: true,
+    // Route helpers resolve the session through the dev provider in tests.
+    env: { AUTH_PROVIDER: "dev" },
   },
 });

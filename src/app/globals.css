@@ -144,6 +144,64 @@ p {
   margin: 0;
 }
 
+.page-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 32px;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.connection-status .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.connection-status.synced {
+  color: var(--success);
+  border-color: rgba(79, 209, 161, 0.3);
+}
+
+.connection-status.syncing,
+.connection-status.pending {
+  color: var(--accent);
+  border-color: rgba(124, 156, 255, 0.35);
+}
+
+.connection-status.syncing .dot {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.connection-status.offline,
+.connection-status.unreachable {
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: rgba(242, 198, 109, 0.35);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .back-link {
   display: inline-flex;
   align-items: center;

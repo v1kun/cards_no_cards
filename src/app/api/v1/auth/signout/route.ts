@@ -1,14 +1,13 @@
-import { ok, withAuth } from "@/lib/api/respond";
+import { ok } from "@/lib/api/respond";
+import { clearSessionCookie } from "@/server/auth/local/cookie";
 
 /**
- * Sign-out endpoint.
- *
- * With the `dev` provider there is no real session to revoke, so this simply
- * acknowledges the request. The Cognito adapter replaces this behavior with
- * token/session invalidation and cookie clearing, without changing the
- * contract callers depend on. Protected so only an authenticated caller can
- * sign out.
+ * Sign-out endpoint: clears the local session cookie. Public, so an expired
+ * or invalid session can always be cleared. The Cognito adapter will add
+ * token revocation behind the same contract.
  */
-export const POST = withAuth(() => {
-  return ok({ signedOut: true });
-});
+export function POST(request: Request) {
+  const response = ok({ signedOut: true });
+  clearSessionCookie(response, request);
+  return response;
+}

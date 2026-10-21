@@ -42,6 +42,18 @@ npm run dev:lan
 Then open `http://<your-computer-ip>:3000` on the phone. The default
 `npm run dev` binds to localhost only, so the LAN address is unreachable.
 
+### Running in the background (`service.sh`)
+
+```bash
+./service.sh start          # migrate, build if sources changed, start on 0.0.0.0:3000
+./service.sh start --dev    # same, but with the hot-reload dev server
+./service.sh status | logs | stop | restart
+```
+
+The production mode is the one to use on the phone: the service worker (and
+offline practice) only runs in production builds. `PORT` and `HOST` override
+the defaults; the PID and log live in `.run/`.
+
 Local development runs with no AWS credentials and no paid AI calls:
 `AI_PROVIDER=mock` is the default.
 
@@ -101,6 +113,7 @@ containers, on next start).
 | `npm run db:generate`  | Generate SQL migrations from the schema   |
 | `npm run db:migrate`   | Apply migrations to `DATABASE_URL`        |
 | `npm run deck:seed`    | Load the A1 starter deck (see below)      |
+| `npm run users:seed`   | Create the local `admin`/`admin1` accounts |
 
 ## Database
 
@@ -129,8 +142,16 @@ npm run db:migrate
 Authentication is behind a vendor-neutral `AuthProvider` abstraction
 (`src/server/auth`), selected by `AUTH_PROVIDER`:
 
-- **`dev` (default):** resolves a stable local session with no real login, so
-  the app runs without AWS or Apple. Set the `x-dev-user-id` request header to
+- **`local` (default, temporary):** login/password accounts stored in
+  `local_accounts` (scrypt hashes) and an HMAC-signed `cnc_session` cookie
+  valid for 30 days. Pages without the cookie redirect to `/login`. Create the
+  accounts with `npm run users:seed` — it adds **`admin` / `admin`** and
+  **`admin1` / `admin1`**, each with its own A1 starter deck. Every user has
+  separate words, progress and offline data (one IndexedDB per user; signing
+  out deletes it from the device). This is tech debt — see
+  `DEFERRED_FEATURES.md`.
+- **`dev`:** resolves a stable local session with no real login, so
+  the app runs without AWS or Apple (used by tests). Set the `x-dev-user-id` request header to
   act as a different local user — useful for checking that one user cannot see
   another's data.
 - **`cognito`:** Amazon Cognito User Pools with Sign in with Apple as a
@@ -140,7 +161,10 @@ Protected route handlers are wrapped with `withAuth` (`src/lib/api/respond.ts`),
 which rejects unauthenticated requests with `401` and otherwise provides the
 resolved session. All responses use the `{ data, error, requestId }` envelope.
 
-Example protected endpoints:
+Example protected endpoints (with `AUTH_PROVIDER=dev`; under `local` sign in
+first: `curl -c jar -H 'content-type: application/json' -d
+'{"login":"admin","password":"admin"}' localhost:3000/api/v1/auth/login` and
+pass `-b jar`):
 
 ```bash
 # Current profile (created on first access)
@@ -373,7 +397,9 @@ variables fail fast with a clear error. Copy `.env.example` and fill values in
   resilience tuning for real AI adapters (ignored by the mock provider)
 - `DATABASE_URL` — libSQL URL for the SQLite database, e.g.
   `file:./local-data/cards.sqlite`
-- `AUTH_PROVIDER` — `dev` (default) or `cognito`
+- `AUTH_PROVIDER` — `local` (default), `dev` or `cognito`
+- `SESSION_SECRET` — signing secret for `local` session cookies (auto-generated
+  into `local-data/session-secret` when unset)
 - `DEV_USER_ID` / `DEV_USER_EMAIL` / `DEV_USER_NAME` — identity used by the
   `dev` auth provider
 

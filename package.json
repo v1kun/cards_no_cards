@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/server/db/migrate-cli.ts",
-    "deck:seed": "tsx scripts/seed-starter-deck.ts"
+    "deck:seed": "tsx scripts/seed-starter-deck.ts",
+    "users:seed": "tsx scripts/seed-users.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.15.15",

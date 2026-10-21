@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 
 import { PageHeader, Spinner } from "@/components/ui";
 import { ApiClientError } from "@/lib/client/api";
-import { getPracticeEngine } from "@/lib/client/practice";
+import { getPracticeEngine, signOut } from "@/lib/client/practice";
+import { getCurrentUser, type CurrentUser } from "@/lib/client/user";
 import {
   getProfile,
   updateProfile,
@@ -22,6 +23,38 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState<TranslationLanguage | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
+
+  useEffect(() => setUser(getCurrentUser()), []);
+
+  const leave = async () => {
+    setAccountError(null);
+    const pending = await getPracticeEngine()
+      .pendingCount()
+      .catch(() => 0);
+    if (
+      pending > 0 &&
+      !window.confirm(
+        `${pending} answer(s) are not synced yet and will be lost on this device. Sign out anyway?`,
+      )
+    ) {
+      return;
+    }
+    setSigningOut(true);
+    try {
+      if (pending > 0)
+        await getPracticeEngine()
+          .sync()
+          .catch(() => undefined);
+      await signOut();
+      window.location.assign("/login");
+    } catch {
+      setAccountError("Signing out needs a connection to the server.");
+      setSigningOut(false);
+    }
+  };
 
   useEffect(() => {
     getProfile()
@@ -103,6 +136,25 @@ export default function SettingsPage() {
         ) : null}
         {message ? <p className="notice small">{message}</p> : null}
         {error ? <p className="error small">{error}</p> : null}
+      </section>
+
+      <section className="card stack" aria-labelledby="account-title">
+        <h2 id="account-title">Account</h2>
+        <p className="muted small">
+          Signed in as <strong>{user?.name ?? "…"}</strong>. Signing out removes this account&apos;s
+          offline copy from the device.
+        </p>
+        {accountError ? <p className="error small">{accountError}</p> : null}
+        <div>
+          <button
+            type="button"
+            className="secondary"
+            disabled={signingOut}
+            onClick={() => void leave()}
+          >
+            {signingOut ? <Spinner /> : null} Sign out
+          </button>
+        </div>
       </section>
     </main>
   );

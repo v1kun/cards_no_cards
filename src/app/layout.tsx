@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { OfflineBanner } from "@/components/OfflineBanner";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { SessionSync } from "@/components/SessionSync";
 
 export const metadata: Metadata = {
   applicationName: "Cards No Cards",
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <OfflineBanner />
         {children}
         <ServiceWorkerRegister />
+        <SessionSync />
       </body>
     </html>
   );

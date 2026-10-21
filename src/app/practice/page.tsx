@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { PageHeader, SectionTile, SegmentedControl, Spinner } from "@/components/ui";
 import type { SectionFilter } from "@/domain/review/session-plan";
 import { ApiClientError } from "@/lib/client/api";
@@ -145,7 +146,7 @@ export default function PracticePage() {
 
   return (
     <main>
-      <PageHeader title="Practice" back={{ href: "/", label: "Home" }}>
+      <PageHeader title="Practice" back={{ href: "/", label: "Home" }} aside={<ConnectionStatus />}>
         {refreshing ? (
           <span className="muted small row center" style={{ gap: "0.4rem" }}>
             <Spinner /> Updating

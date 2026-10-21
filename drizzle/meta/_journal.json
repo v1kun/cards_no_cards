@@ -15,6 +15,13 @@
       "when": 1792591626248,
       "tag": "0001_wide_quicksilver",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792598158593,
+      "tag": "0002_local_accounts",
+      "breakpoints": true
     }
   ]
 }

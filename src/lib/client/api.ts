@@ -41,6 +41,13 @@ export async function apiFetch<T>(input: string, init?: RequestInit): Promise<T>
   const body = (await response.json().catch(() => null)) as ApiEnvelope<T> | null;
 
   if (!response.ok || !body || body.error) {
+    // An expired or missing session: go sign in (auth endpoints report their own errors).
+    if (response.status === 401 && !input.startsWith("/api/v1/auth/")) {
+      const next = window.location.pathname + window.location.search;
+      if (window.location.pathname !== "/login") {
+        window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+      }
+    }
     throw new ApiClientError(
       body?.error?.code ?? "ERROR",
       body?.error?.message ?? "The request failed.",
