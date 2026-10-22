@@ -99,7 +99,7 @@ describe("planSession", () => {
   it("uses reverse multiple choice with Spanish options after one recall", () => {
     const words = [word("w1"), word("w2"), word("w3")];
     const states = new Map([["w1", introduced()]]);
-    const [first] = planSession({ words, states, bank: [], now });
+    const [first] = planSession({ words, states, bank: [], now, random: () => 0.1 });
     expect(first!.exerciseType).toBe("multiple_choice_reverse");
     expect(first!.promptText).toBe("translation-w1");
     expect(first!.options).toContain("lemma-w1");

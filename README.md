@@ -254,9 +254,11 @@ Practice lives at [`/practice`](http://localhost:3000/practice). Pick a
 **section** — all words, a category (topic) or a part of speech — and run a
 short session. Each session mixes words whose scheduled review is **due** with
 up to five **new** words; due reviews are always prioritized. Exercises are
-served one at a time: multiple choice for new words, recall from the
-translation once a word is known, and cloze (fill-in-the-blank) for well-known
-words. Typed answers offer a hint (first letter and length); a hint-assisted
+served one at a time. New words always start with multiple choice; after the
+first correct answer the type is picked at random, weighted by how well the
+word is known: reverse multiple choice and typed recall (from the
+translation), then mostly typed recall, then mostly cloze (fill-in-the-blank)
+when a sentence is available. Typed answers offer a hint (first letter and length); a hint-assisted
 answer is recorded as such.
 
 When a section has nothing due and no new words left, it does not stop: the

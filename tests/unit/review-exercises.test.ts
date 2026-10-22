@@ -30,6 +30,31 @@ describe("selectExerciseType", () => {
     );
   });
 
+  it("mixes types for known words when given randomness, never for new ones", () => {
+    const pick = (successfulRecalls: number, roll: number) =>
+      selectExerciseType({
+        isNew: false,
+        successfulRecalls,
+        lemma: word.lemma,
+        exampleSentence: word.exampleSentence,
+        random: () => roll,
+      });
+    expect(
+      selectExerciseType({ isNew: true, successfulRecalls: 0, lemma: "x", random: () => 0.9 }),
+    ).toBe("multiple_choice");
+    expect([pick(1, 0.1), pick(1, 0.9)]).toEqual(["multiple_choice_reverse", "recall"]);
+    expect([pick(2, 0.1), pick(2, 0.7), pick(2, 0.95)]).toEqual([
+      "recall",
+      "multiple_choice_reverse",
+      "multiple_choice",
+    ]);
+    expect([pick(3, 0.1), pick(3, 0.6), pick(3, 0.95)]).toEqual([
+      "cloze",
+      "recall",
+      "multiple_choice_reverse",
+    ]);
+  });
+
   it("moves to typed recall after two recalls", () => {
     expect(selectExerciseType({ isNew: false, successfulRecalls: 2, lemma: word.lemma })).toBe(
       "recall",

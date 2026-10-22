@@ -149,6 +149,7 @@ function exerciseBuilder(input: PlanInput, random: () => number) {
       exampleSentence: word.exampleSentence,
       lemma: word.lemma,
       clozeAvailable: items.some((item) => item.exerciseType === "cloze"),
+      random,
     });
     const seed = `${word.id}:${state?.lastReviewedAt?.getTime() ?? 0}`;
 

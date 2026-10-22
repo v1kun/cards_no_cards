@@ -84,20 +84,47 @@ export function selectExerciseType(input: {
   lemma: string;
   /** Whether a pre-generated cloze exercise exists for the word. */
   clozeAvailable?: boolean;
+  /**
+   * When given, known words get a random mix of types weighted towards the
+   * stage's main type; without it the main type is always returned.
+   */
+  random?: () => number;
 }): ExerciseType {
   if (input.isNew || input.successfulRecalls < 1) {
     return "multiple_choice";
   }
-  if (input.successfulRecalls === 1) {
-    return "multiple_choice_reverse";
-  }
-  if (
+  const cloze =
     input.successfulRecalls >= 3 &&
-    (input.clozeAvailable || hasUsableCloze(input.exampleSentence, input.lemma))
-  ) {
-    return "cloze";
+    (input.clozeAvailable || hasUsableCloze(input.exampleSentence, input.lemma));
+  const weights: [ExerciseType, number][] =
+    input.successfulRecalls === 1
+      ? [
+          ["multiple_choice_reverse", 0.5],
+          ["recall", 0.5],
+        ]
+      : input.successfulRecalls === 2
+        ? [
+            ["recall", 0.6],
+            ["multiple_choice_reverse", 0.25],
+            ["multiple_choice", 0.15],
+          ]
+        : cloze
+          ? [
+              ["cloze", 0.5],
+              ["recall", 0.35],
+              ["multiple_choice_reverse", 0.15],
+            ]
+          : [
+              ["recall", 0.75],
+              ["multiple_choice_reverse", 0.25],
+            ];
+  if (!input.random) return weights[0]![0];
+  let roll = input.random();
+  for (const [type, weight] of weights) {
+    roll -= weight;
+    if (roll < 0) return type;
   }
-  return "recall";
+  return weights[weights.length - 1]![0];
 }
 
 function hasUsableCloze(sentence: string | null | undefined, lemma: string): boolean {
