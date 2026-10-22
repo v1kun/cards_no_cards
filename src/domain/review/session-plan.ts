@@ -89,6 +89,50 @@ export function planSession(input: PlanInput): PracticeExercise[] {
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
     .slice(0, newLimit);
 
+  const plan = exerciseBuilder(input, random);
+  return [...due.map((word) => plan(word, false)), ...fresh.map((word) => plan(word, true))];
+}
+
+/** Upper bound on words in one extra-practice session. */
+export const EXTRA_SESSION_SIZE = 10;
+
+export type ExtraPlanInput = PlanInput & {
+  size?: number;
+  /** Words already drilled recently; used only when nothing else is left. */
+  exclude?: ReadonlySet<string>;
+};
+
+/**
+ * Plans extra practice for a section whose schedule is empty: already
+ * introduced words, weakest first (last answer wrong, then lower ladder
+ * stage), random within each group. Exercises are marked `extra` so their
+ * answers only touch the schedule when wrong.
+ */
+export function planExtraSession(input: ExtraPlanInput): PracticeExercise[] {
+  const random = input.random ?? Math.random;
+  const filter = input.filter ?? { kind: "all" };
+  const size = input.size ?? EXTRA_SESSION_SIZE;
+  const exclude = input.exclude ?? new Set<string>();
+  const weakness = (word: PlanWord) => {
+    const state = input.states.get(word.id)!;
+    return (state.lastResult === "wrong" ? 0 : 100) + state.reviewStage;
+  };
+  const introduced = shuffle(
+    input.words.filter(
+      (word) => matchesFilter(word, filter) && isIntroduced(input.states.get(word.id)),
+    ),
+    random,
+  ).sort((a, b) => weakness(a) - weakness(b));
+  const ordered = [
+    ...introduced.filter((word) => !exclude.has(word.id)),
+    ...introduced.filter((word) => exclude.has(word.id)),
+  ].slice(0, size);
+
+  const plan = exerciseBuilder(input, random);
+  return ordered.map((word) => ({ ...plan(word, false), extra: true }));
+}
+
+function exerciseBuilder(input: PlanInput, random: () => number) {
   const bankByWord = new Map<string, BankItem[]>();
   for (const item of input.bank) {
     const list = bankByWord.get(item.vocabularyItemId) ?? [];
@@ -96,7 +140,7 @@ export function planSession(input: PlanInput): PracticeExercise[] {
     bankByWord.set(item.vocabularyItemId, list);
   }
 
-  const plan = (word: PlanWord, isNew: boolean): PracticeExercise => {
+  return (word: PlanWord, isNew: boolean): PracticeExercise => {
     const state = input.states.get(word.id);
     const items = bankByWord.get(word.id) ?? [];
     const type = selectExerciseType({
@@ -115,8 +159,6 @@ export function planSession(input: PlanInput): PracticeExercise[] {
     }
     return deterministicExercise(word, type, isNew, input.words, random);
   };
-
-  return [...due.map((word) => plan(word, false)), ...fresh.map((word) => plan(word, true))];
 }
 
 function deterministicExercise(

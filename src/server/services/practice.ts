@@ -51,6 +51,7 @@ export const syncInputSchema = z.object({
         skipped: z.boolean().default(false),
         latencyMs: z.number().int().nonnegative().max(3_600_000).nullable().optional(),
         answeredAt: z.number().int().nonnegative(),
+        extra: z.boolean().default(false),
       }),
     )
     .max(MAX_SYNC_ATTEMPTS)
@@ -192,7 +193,7 @@ export class PracticeService {
 
         const answeredAt = clamp(attempt.answeredAt);
         const current = stateById.get(word.id) ?? initialSchedulingState();
-        const next = applyAnswer(current, grade, answeredAt);
+        const next = applyAnswer(current, grade, answeredAt, { extra: attempt.extra });
         stateById.set(word.id, next);
         touched.add(word.id);
 
@@ -208,6 +209,7 @@ export class PracticeService {
             exerciseType: attempt.exerciseType,
             bankItemId: usableBank?.id ?? null,
             acceptedAnswers: accepted,
+            ...(attempt.extra ? { extra: true } : {}),
           }),
           submittedAnswer: attempt.submittedAnswer?.trim() || null,
           result: grade,

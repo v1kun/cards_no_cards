@@ -51,6 +51,8 @@ export type PracticeExercise = ExercisePrompt & {
   acceptedAnswers: string[];
   /** The bank item this exercise came from, or null when built deterministically. */
   bankItemId: string | null;
+  /** Extra practice beyond the schedule: only wrong answers reschedule. */
+  extra?: boolean;
 };
 
 /** True for the two multiple-choice exercise types. */

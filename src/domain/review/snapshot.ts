@@ -71,13 +71,15 @@ export function statesMap(states: SnapshotState[]): Map<string, SchedulingState>
 /**
  * Applies one answer. An answer recorded offline may arrive after a newer
  * one; it is then applied at the latest review time so the schedule never
- * moves backwards.
+ * moves backwards. Extra-practice answers only reschedule when wrong.
  */
 export function applyAnswer(
   state: SchedulingState,
   result: ReviewResult,
   answeredAt: number,
+  options: { extra?: boolean } = {},
 ): SchedulingState {
+  if (options.extra && result !== "wrong") return state;
   const at = Math.max(answeredAt, state.lastReviewedAt?.getTime() ?? 0);
   return nextSchedulingState(state, result, new Date(at));
 }

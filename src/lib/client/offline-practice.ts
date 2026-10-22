@@ -1,6 +1,7 @@
 import { gradeAnswer, type PracticeExercise } from "@/domain/review/exercises";
 import { initialSchedulingState, type ReviewResult } from "@/domain/review/schedule";
 import {
+  planExtraSession,
   planSession,
   summarizeSections,
   type SectionFilter,
@@ -72,6 +73,7 @@ function toSyncAttempt(attempt: PendingAttempt): SyncRequest["attempts"][number]
     skipped: attempt.skipped,
     latencyMs: attempt.latencyMs,
     answeredAt: attempt.answeredAt,
+    ...(attempt.extra ? { extra: true } : {}),
   };
 }
 
@@ -151,6 +153,22 @@ export class OfflinePractice {
     });
   }
 
+  /** Extra practice for a section with nothing scheduled; `exclude` holds recently drilled words. */
+  planExtra(
+    snapshot: PracticeSnapshot,
+    filter: SectionFilter,
+    exclude?: ReadonlySet<string>,
+  ): PracticeExercise[] {
+    return planExtraSession({
+      words: snapshot.words,
+      states: statesMap(snapshot.states),
+      bank: snapshot.bank,
+      now: new Date(this.clock()),
+      filter,
+      exclude,
+    });
+  }
+
   private readonly sessionResults = new Map<
     string,
     Pick<PendingAttempt, "vocabularyItemId" | "result">[]
@@ -188,6 +206,7 @@ export class OfflinePractice {
         skipped: input.skipped ?? false,
         latencyMs: input.latencyMs ?? null,
         answeredAt,
+        ...(exercise.extra ? { extra: true } : {}),
         result,
       });
 
@@ -196,7 +215,7 @@ export class OfflinePractice {
       if (snapshot) {
         const states = statesMap(snapshot.states);
         const current = states.get(exercise.vocabularyItemId) ?? initialSchedulingState();
-        const next = applyAnswer(current, result, answeredAt);
+        const next = applyAnswer(current, result, answeredAt, { extra: exercise.extra });
         snapshot.states = [
           ...snapshot.states.filter((s) => s.vocabularyItemId !== exercise.vocabularyItemId),
           toSnapshotState(exercise.vocabularyItemId, next),
@@ -296,7 +315,10 @@ export function replay(states: SnapshotState[], pending: PendingAttempt[]): Snap
   const map = new Map(states.map((s) => [s.vocabularyItemId, fromSnapshotState(s)]));
   for (const attempt of [...pending].sort((a, b) => a.answeredAt - b.answeredAt)) {
     const current = map.get(attempt.vocabularyItemId) ?? initialSchedulingState();
-    map.set(attempt.vocabularyItemId, applyAnswer(current, attempt.result, attempt.answeredAt));
+    map.set(
+      attempt.vocabularyItemId,
+      applyAnswer(current, attempt.result, attempt.answeredAt, { extra: attempt.extra }),
+    );
   }
   return [...map.entries()].map(([id, state]) => toSnapshotState(id, state));
 }

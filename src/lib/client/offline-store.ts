@@ -14,6 +14,8 @@ export type PendingAttempt = {
   skipped: boolean;
   latencyMs: number | null;
   answeredAt: number;
+  /** Extra practice beyond the schedule (absent on older records). */
+  extra?: boolean;
   /** The locally computed result (the server re-grades). */
   result: ReviewResult;
 };

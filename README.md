@@ -259,6 +259,13 @@ translation once a word is known, and cloze (fill-in-the-blank) for well-known
 words. Typed answers offer a hint (first letter and length); a hint-assisted
 answer is recorded as such.
 
+When a section has nothing due and no new words left, it does not stop: the
+session switches to **Extra practice** (badge on each card) with up to 10
+already-learned words, weakest first and shuffled, avoiding words drilled a
+moment ago. In extra practice only **mistakes** change the schedule (the word
+comes back for review soon); correct answers, hints and skips leave it as is.
+**Keep practicing** on the summary starts another round.
+
 ### Prepared questions (exercise bank)
 
 Questions are **generated ahead of time by AI** and stored per word (a few

@@ -79,6 +79,8 @@ function PracticeSession() {
   const [usedHint, setUsedHint] = useState(false);
   const [outcome, setOutcome] = useState<AnswerOutcome | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [extra, setExtra] = useState(false);
+  const drilled = useRef(new Set<string>());
   const shownAt = useRef(Date.now());
   const inputRef = useRef<HTMLInputElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
@@ -92,7 +94,14 @@ function PracticeSession() {
       setPhase({ kind: "missing" });
       return;
     }
-    const planned = engine.plan(saved, filter);
+    let planned = engine.plan(saved, filter);
+    const isExtra = planned.length === 0;
+    if (isExtra) {
+      // Nothing scheduled: keep practicing already introduced words.
+      planned = engine.planExtra(saved, filter, drilled.current);
+      for (const item of planned) drilled.current.add(item.vocabularyItemId);
+    }
+    setExtra(isExtra);
     setSnapshot(saved);
     setExercises(planned);
     setIndex(0);
@@ -245,9 +254,7 @@ function PracticeSession() {
             ✅
           </span>
           <h2>All caught up</h2>
-          <p className="muted">
-            Nothing in this section is due right now and there are no new words to introduce.
-          </p>
+          <p className="muted">This section has no words to practice yet.</p>
           <Link className="button" href="/practice">
             Choose another section
           </Link>
@@ -277,6 +284,11 @@ function PracticeSession() {
             <p className="muted">
               {summary.wordsPracticed} word{summary.wordsPracticed === 1 ? "" : "s"} in “{title}”
             </p>
+            {extra ? (
+              <p className="muted small">
+                Extra practice: only mistakes change your review schedule.
+              </p>
+            ) : null}
           </div>
           <div className="stats">
             <div className="stat">
@@ -298,7 +310,7 @@ function PracticeSession() {
           </div>
           <div className="row center">
             <button type="button" className="large" onClick={() => void start()}>
-              Practice again
+              Keep practicing
             </button>
             <Link className="button secondary large" href="/practice">
               Other sections
@@ -334,6 +346,14 @@ function PracticeSession() {
       <section className="card exercise" aria-live="polite">
         <div className="row center" style={{ justifyContent: "center" }}>
           {current.isNew ? <span className="badge warn">New word</span> : null}
+          {current.extra ? (
+            <span
+              className="badge"
+              title="Everything here is up to date. Only mistakes change your review schedule."
+            >
+              Extra practice
+            </span>
+          ) : null}
         </div>
         <p className="exercise-instruction">{current.instruction}</p>
         <p

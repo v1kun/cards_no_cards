@@ -112,6 +112,35 @@ describe("OfflinePractice", () => {
     expect(sections.all).toMatchObject({ total: 3, new: 2, learned: 1 });
   });
 
+  it("continues with extra practice that reschedules only on mistakes", async () => {
+    const { engine, api, store, tick } = setup();
+    await engine.refresh();
+    const session = engine.startSession();
+    for (const exercise of engine.plan((await engine.load())!, { kind: "topic", topicId: "t1" })) {
+      await engine.answer(session, exercise, { answer: exercise.correctAnswer });
+    }
+    const done = (await engine.load())!;
+    expect(engine.plan(done, { kind: "topic", topicId: "t1" })).toEqual([]);
+
+    const extra = engine.planExtra(done, { kind: "topic", topicId: "t1" });
+    expect(extra.map((e) => e.vocabularyItemId).sort()).toEqual(["w1", "w3"]);
+    expect(extra.every((e) => e.extra)).toBe(true);
+
+    const stateOf = async (id: string) =>
+      (await store.getSnapshot())!.states.find((s) => s.vocabularyItemId === id);
+    tick(60_000);
+    const [right, wrong] = extra;
+    const before = await stateOf(right!.vocabularyItemId);
+    await engine.answer(session, right!, { answer: right!.correctAnswer });
+    expect(await stateOf(right!.vocabularyItemId)).toEqual(before);
+
+    await engine.answer(session, wrong!, { answer: "nope" });
+    expect((await stateOf(wrong!.vocabularyItemId))?.lastResult).toBe("wrong");
+
+    await engine.sync();
+    expect(api.requests[0]?.attempts.filter((a) => a.extra)).toHaveLength(2);
+  });
+
   it("keeps answers queued while offline and syncs them later", async () => {
     const { engine, api } = setup();
     await engine.refresh();

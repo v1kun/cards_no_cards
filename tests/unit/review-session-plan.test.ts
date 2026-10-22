@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { BankItem } from "@/domain/review/bank";
 import { initialSchedulingState, type SchedulingState } from "@/domain/review/schedule";
 import {
+  EXTRA_SESSION_SIZE,
   pickDistractors,
+  planExtraSession,
   planSession,
   summarizeSections,
   type PlanWord,
@@ -107,6 +109,53 @@ describe("planSession", () => {
   it("falls back to recall when no distractors exist", () => {
     const [only] = planSession({ words: [word("w1")], states: new Map(), bank: [], now });
     expect(only!.exerciseType).toBe("recall");
+  });
+});
+
+describe("planExtraSession", () => {
+  const notDue = (overrides: Partial<SchedulingState> = {}) =>
+    introduced({ dueAt: new Date("2026-03-01T00:00:00Z"), ...overrides });
+
+  it("drills only introduced words in the section, weakest first, marked extra", () => {
+    const words = [
+      word("w1", { topicIds: ["food"] }),
+      word("w2", { topicIds: ["food"] }),
+      word("w3", { topicIds: ["food"] }),
+      word("w4", { topicIds: ["home"] }),
+    ];
+    const states = new Map([
+      ["w1", notDue({ reviewStage: 3 })],
+      ["w2", notDue({ reviewStage: 2, lastResult: "wrong" })],
+      ["w4", notDue()],
+    ]);
+    const plan = planExtraSession({
+      words,
+      states,
+      bank: [],
+      now,
+      filter: { kind: "topic", topicId: "food" },
+      random: seeded(3),
+    });
+    expect(plan.map((e) => e.vocabularyItemId)).toEqual(["w2", "w1"]);
+    expect(plan.every((e) => e.extra === true && !e.isNew)).toBe(true);
+  });
+
+  it("caps the size, varies the pick, and prefers words not drilled recently", () => {
+    const words = Array.from({ length: 30 }, (_, i) => word(`w${i + 1}`));
+    const states = new Map(words.map((w) => [w.id, notDue()]));
+    const ids = (seed: number, exclude?: Set<string>) =>
+      planExtraSession({ words, states, bank: [], now, random: seeded(seed), exclude }).map(
+        (e) => e.vocabularyItemId,
+      );
+    const first = ids(1);
+    expect(first).toHaveLength(EXTRA_SESSION_SIZE);
+    expect(ids(2)).not.toEqual(first);
+    const next = ids(1, new Set(first));
+    expect(next.some((id) => first.includes(id))).toBe(false);
+  });
+
+  it("returns nothing when no word in the section was introduced", () => {
+    expect(planExtraSession({ words: [word("w1")], states: new Map(), bank: [], now })).toEqual([]);
   });
 });
 

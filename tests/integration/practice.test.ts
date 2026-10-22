@@ -89,6 +89,30 @@ describe("PracticeService (offline snapshot + sync)", () => {
     expect(history.map((row) => row.createdAt.getTime())).toEqual([answeredAt, answeredAt + 10]);
   });
 
+  it("lets extra-practice answers reschedule only when wrong", async () => {
+    const word = await seedWord("hablar", "to speak");
+    const answeredAt = Date.now() - 1000;
+    await service.sync(userId, { attempts: [attempt(word.id, { answeredAt })] });
+    const before = await reviews.getState(userId, word.id);
+
+    await service.sync(userId, {
+      attempts: [attempt(word.id, { answeredAt: answeredAt + 10, extra: true })],
+    });
+    const afterCorrect = await reviews.getState(userId, word.id);
+    expect(afterCorrect?.dueAt).toEqual(before?.dueAt);
+    expect(afterCorrect?.successfulRecalls).toBe(before?.successfulRecalls);
+
+    await service.sync(userId, {
+      attempts: [
+        attempt(word.id, { answeredAt: answeredAt + 20, extra: true, submittedAnswer: "nope" }),
+      ],
+    });
+    const afterWrong = await reviews.getState(userId, word.id);
+    expect(afterWrong?.lastResult).toBe("wrong");
+    expect(afterWrong!.dueAt!.getTime()).toBeLessThan(before!.dueAt!.getTime());
+    expect(await reviews.listAttempts(userId, word.id)).toHaveLength(3);
+  });
+
   it("is idempotent per attempt id", async () => {
     const word = await seedWord("hablar", "to speak");
     const single = attempt(word.id);
